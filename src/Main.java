@@ -11,12 +11,16 @@ public class Main {
             # editing this config will take up to 60 seconds to take effect
             # there is no need to restart the program after changing these values
             
-            
+            # timeout in milliseconds
             timeout: 4000
+            
+            # volume
             master_gain: -24.0
+            
+            # The number of times it will make a ping sound when connecting / disconnecting
+            # setting these values to 0 will disable ping sounds
             disconnect_ping_count: 1
             connect_ping_count: 1
-            
             
             # lines that start with '#' are ignored
             """;
