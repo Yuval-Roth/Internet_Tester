@@ -8,10 +8,17 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class Main {
 
     public static final String DEFAULT_CONFIG_FILE = """
+            # editing this config will take up to 60 seconds to take effect
+            # there is no need to restart the program after changing these values
+            
+            
             timeout: 4000
             master_gain: -24.0
             disconnect_ping_count: 1
             connect_ping_count: 1
+            
+            
+            # lines that start with '#' are ignored
             """;
     static String[] addresses;
     private static char symbol = '|';
@@ -78,6 +85,7 @@ public class Main {
 
         long nextConnectionCheckTime = System.currentTimeMillis();
         long nextAnimationTime = System.currentTimeMillis();
+        long nextReadConfigTime = System.currentTimeMillis() + 1000*60;
         long nextWakeUp;
         while(true){
 
@@ -92,6 +100,13 @@ public class Main {
             if(System.currentTimeMillis() >= nextAnimationTime || statusChanged){
                 animateMonitoring();
                 nextAnimationTime = System.currentTimeMillis() + 250;
+            }
+
+            // check for changes in the config file
+            if(System.currentTimeMillis() >= nextReadConfigTime){
+                readConfig();
+                initGlobalVariables();
+                nextReadConfigTime = System.currentTimeMillis() + 1000*60;
             }
 
             nextWakeUp = Math.min(nextAnimationTime,nextConnectionCheckTime);
@@ -171,10 +186,12 @@ public class Main {
 
         try (BufferedReader configFile = new BufferedReader(new FileReader(getFolderPath()+"config.txt"))) {
             String line;
-            while ((line = configFile.readLine()) != null && line.contains(":")){
-                String key = line.substring(0,line.indexOf(":")).strip().toLowerCase();
-                String value = line.substring((line.indexOf(":")+1)).strip().toLowerCase();
-                config.put(key,value);
+            while ((line = configFile.readLine()) != null){
+                if(line.contains(":") && line.charAt(0) != '#'){
+                    String key = line.substring(0,line.indexOf(":")).strip().toLowerCase();
+                    String value = line.substring((line.indexOf(":")+1)).strip().toLowerCase();
+                    config.put(key,value);
+                }
             }
         } catch (FileNotFoundException e){
             try(BufferedWriter writer = getWriter("config.txt")){
