@@ -20,7 +20,12 @@ public class Main {
             
             # lines that start with '#' are ignored
             """;
-    static String[] addresses;
+    public static final int SLEEP_TIME_BETWEEN_CONNECTION_CHECKS = 100;
+    public static final int ONE_MINUTE = 1000 * 60;
+    public static final int SLEEP_TIME_BETWEEN_ANIMATION_UPDATES = 250;
+    public static final int SLEEP_TIME_BETWEEN_PINGS = 1000;
+    private static String[] addresses;
+    private static boolean[] addressStatus;
     private static char symbol = '|';
     private static Clip clip;
     private static Map<String, String> config;
@@ -29,27 +34,28 @@ public class Main {
     private static float master_gain;
     private static int connect_ping_count;
     private static Thread[] workerThreads;
-    private static LocalDateTime[] disconnection_time;
+    private static Object timeOfDisconnectionLock;
     private static AtomicInteger disconnectedCounter;
     private static boolean connected;
     private static String lastMsg;
+    private static Thread mainThread;
+    private static LocalDateTime timeOfDisconnection;
 
-    public static void main(String[] args) throws IOException {
+    public static void main(String[] args)  {
 
         while(true){
             try{
                 // ==== initialize basic fields =====
-                workerThreads = new Thread[args.length];
-                disconnection_time = new LocalDateTime[args.length];
                 addresses = args;
-                try {
-                    clip = AudioSystem.getClip();
-                } catch (LineUnavailableException e) {
-                    throw new RuntimeException(e);
-                }
+                workerThreads = new Thread[addresses.length];
+                addressStatus = new boolean[addresses.length];
+                Arrays.fill(addressStatus,true);
+                clip = AudioSystem.getClip();
                 disconnectedCounter = new AtomicInteger(0);
                 connected = true;
                 lastMsg = "";
+                mainThread = Thread.currentThread();
+                timeOfDisconnectionLock = new Object();
                 // ==================================
 
                 readConfig();
@@ -73,7 +79,7 @@ public class Main {
                 String message = timestamp+": "+ e +"\n";
                 try(BufferedWriter writer = getWriter("error-log")){
                     writer.write(message);
-                }
+                } catch (IOException ignored) {}
                 System.out.println(message);
                 e.printStackTrace();
                 System.out.println("Restarting...\n\n\n\n");
@@ -85,7 +91,7 @@ public class Main {
 
         long nextConnectionCheckTime = System.currentTimeMillis();
         long nextAnimationTime = System.currentTimeMillis();
-        long nextReadConfigTime = System.currentTimeMillis() + 1000*60;
+        long nextReadConfigTime = System.currentTimeMillis() + ONE_MINUTE;
         long nextWakeUp;
         while(true){
 
@@ -93,20 +99,20 @@ public class Main {
             boolean statusChanged = false;
             if(System.currentTimeMillis() >= nextConnectionCheckTime){
                 statusChanged = checkConnectionStatus();
-                nextConnectionCheckTime = System.currentTimeMillis() + 100;
+                nextConnectionCheckTime = System.currentTimeMillis() + SLEEP_TIME_BETWEEN_CONNECTION_CHECKS;
             }
 
             // monitoring animation
             if(System.currentTimeMillis() >= nextAnimationTime || statusChanged){
                 animateMonitoring();
-                nextAnimationTime = System.currentTimeMillis() + 250;
+                nextAnimationTime = System.currentTimeMillis() + SLEEP_TIME_BETWEEN_ANIMATION_UPDATES;
             }
 
             // check for changes in the config file
             if(System.currentTimeMillis() >= nextReadConfigTime){
                 readConfig();
                 initGlobalVariables();
-                nextReadConfigTime = System.currentTimeMillis() + 1000*60;
+                nextReadConfigTime = System.currentTimeMillis() + ONE_MINUTE;
             }
 
             nextWakeUp = Math.min(nextAnimationTime,nextConnectionCheckTime);
@@ -137,35 +143,43 @@ public class Main {
                 LocalDateTime now = LocalDateTime.now();
                 if (!doCommand(commands)){
 
-                    disconnection_time[threadIndex] = now;
+                    synchronized (timeOfDisconnectionLock){
+                        if(timeOfDisconnection == null || timeOfDisconnection.isAfter(now)){
+                            timeOfDisconnection = now;
+                        }
+                    }
+
                     int expectedValue;
                     int newValue;
+
+                    addressStatus[threadIndex] = false;
                     do {
                         expectedValue = disconnectedCounter.get();
                         newValue = expectedValue+1;
                     } while(! disconnectedCounter.compareAndSet(expectedValue,newValue));
+
+                    if(disconnectedCounter.get() == addresses.length) mainThread.interrupt();
 
                     // wait for connection to return
                     List<String> waitingCommands = new ArrayList<>(commands);
                     waitingCommands.set(3,"500");
                     while(!doCommand(waitingCommands)){
                         try{
-                            Thread.sleep(100);
+                            Thread.sleep(SLEEP_TIME_BETWEEN_CONNECTION_CHECKS);
                         } catch (InterruptedException ignored) {}
                     }
+
+                    addressStatus[threadIndex] = true;
                     do {
                         expectedValue = disconnectedCounter.get();
                         newValue = expectedValue-1;
                     } while(! disconnectedCounter.compareAndSet(expectedValue,newValue));
-                    synchronized (disconnection_time[threadIndex]){
-                        disconnection_time[threadIndex] = null;
-                    }
                 }
             } catch (IOException e){
                 throw new RuntimeException(e);
             }
             try {
-                Thread.sleep(1000);
+                Thread.sleep(SLEEP_TIME_BETWEEN_PINGS);
             } catch (InterruptedException ignored) {}
         }
     }
@@ -213,25 +227,8 @@ public class Main {
         if (disconnectedCounter.get() == addresses.length) {
             if (connected) {
 
-                // get time of disconnection
-                LocalDateTime earliest;
-                synchronized (disconnection_time) {
-
-                    // for the small chance that one of the threads resets before
-                    // the main thread can log the disconnection
-                    for (LocalDateTime t : disconnection_time) if (t == null) return false;
-
-                    // find the earliest time of disconnection
-                    earliest = disconnection_time[0];
-                    for (int i = 1; i < addresses.length; i++) {
-                        if (disconnection_time[i].isBefore(earliest)) {
-                            earliest = disconnection_time[i];
-                        }
-                    }
-                }
-
                 // log the disconnection
-                String timeStamp = getTimestamp(earliest);
+                String timeStamp = getTimestamp(timeOfDisconnection);
                 clearLine();
                 String message = "[%s] Lost connection\n".formatted(timeStamp);
                 System.out.print(message);
@@ -260,9 +257,29 @@ public class Main {
 
                 if(connect_ping_count > 0) playAudio("connect_ping.wav",connect_ping_count);
                 connected = true;
+                synchronized (timeOfDisconnectionLock){
+                    timeOfDisconnection = null;
+                }
                 return true; // signal that connection status changed
             }
         }
+
+        // this code fixes disconnection time skews from addresses that haven't responded in a while.
+        // if an address doesn't respond, it will mark the time of disconnection as the time
+        // that the address stopped responding, which could be a long time ago.
+        // if that time passes the timeout period plus one second but the other connections are fine
+        // it's safe to assume that it is a problem with the address and not with the connection.
+        // So we reset the time of disconnection.
+        if(timeOfDisconnection != null){
+            if(connected) {
+                synchronized (timeOfDisconnectionLock){
+                    if(timeOfDisconnection.isBefore(LocalDateTime.now().minusSeconds(timeout*1000 + 1000))){
+                        timeOfDisconnection = null;
+                    }
+                }
+            }
+        }
+
         return false; // signal that connection status has not changed
     }
 
@@ -337,7 +354,7 @@ public class Main {
     private static void animateMonitoring() {
         String msg = "\rMonitoring [ "+ symbol+" ]";
         for (int i = 0; i< addresses.length;i++){
-            msg += " - "+addresses[i]+" [ %s ]".formatted(disconnection_time[i] == null ? "OK" : "XX");
+            msg += " - "+addresses[i]+" [ %s ]".formatted(addressStatus[i] ? "OK" : "XX");
         }
         System.out.print(msg);
         lastMsg = msg;
