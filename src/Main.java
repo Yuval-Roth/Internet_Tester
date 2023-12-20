@@ -38,7 +38,6 @@ public class Main {
     private static AtomicInteger disconnectedCounter;
     private static boolean connected;
     private static String lastMsg;
-    private static Thread mainThread;
     private static LocalDateTime timeOfDisconnection;
 
     public static void main(String[] args)  {
@@ -54,7 +53,6 @@ public class Main {
                 disconnectedCounter = new AtomicInteger(0);
                 connected = true;
                 lastMsg = "";
-                mainThread = Thread.currentThread();
                 timeOfDisconnectionLock = new Object();
                 // ==================================
 
@@ -157,8 +155,6 @@ public class Main {
                         expectedValue = disconnectedCounter.get();
                         newValue = expectedValue+1;
                     } while(! disconnectedCounter.compareAndSet(expectedValue,newValue));
-
-                    if(disconnectedCounter.get() == addresses.length) mainThread.interrupt();
 
                     // wait for connection to return
                     List<String> waitingCommands = new ArrayList<>(commands);
