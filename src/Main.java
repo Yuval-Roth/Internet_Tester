@@ -3,7 +3,6 @@ import javax.sound.sampled.*;
 import java.io.*;
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class Main {
@@ -17,9 +16,6 @@ public class Main {
     static String[] addresses;
     private static char symbol = '|';
     private static Clip clip;
-    private static Thread animator = new Thread(Main::animateMonitoring);
-    private static AtomicBoolean shouldAnimate;
-    private static AtomicBoolean animating;
     private static Map<String, String> config;
     private static Integer timeout;
     private static Integer disconnect_ping_count;
@@ -27,11 +23,9 @@ public class Main {
     private static int connect_ping_count;
     private static Thread[] workerThreads;
     private static LocalDateTime[] disconnection_time;
-    private static AtomicInteger counter;
-    private static AtomicBoolean running;
-
-    private static final char CHECK_MARK = '\u2714';
-    private static final char X_MARK = '\u274c';
+    private static AtomicInteger disconnectedCounter;
+    private static boolean connected;
+    private static String lastMsg;
 
     public static void main(String[] args) throws IOException {
 
@@ -46,10 +40,9 @@ public class Main {
                 } catch (LineUnavailableException e) {
                     throw new RuntimeException(e);
                 }
-                shouldAnimate = new AtomicBoolean(true);
-                counter = new AtomicInteger(0);
-                running = new AtomicBoolean(true);
-                animating = new AtomicBoolean(false);
+                disconnectedCounter = new AtomicInteger(0);
+                connected = true;
+                lastMsg = "";
                 // ==================================
 
                 readConfig();
@@ -65,7 +58,6 @@ public class Main {
                 }
 
                 // start
-                animator.start();
                 for(Thread t : workerThreads) t.start();
                 mainLoop();
 
@@ -82,15 +74,29 @@ public class Main {
         }
     }
 
-    private static void mainLoop() {
+    private static void mainLoop() throws IOException {
+
+        long nextConnectionCheckTime = System.currentTimeMillis();
+        long nextAnimationTime = System.currentTimeMillis();
+        long nextWakeUp;
         while(true){
-            try {
-                checkIfDisconnected();
-            } catch (IOException e) {
-                throw new RuntimeException(e);
+
+            // connection check
+            boolean statusChanged = false;
+            if(System.currentTimeMillis() >= nextConnectionCheckTime){
+                statusChanged = checkConnectionStatus();
+                nextConnectionCheckTime = System.currentTimeMillis() + 100;
             }
+
+            // monitoring animation
+            if(System.currentTimeMillis() >= nextAnimationTime || statusChanged){
+                animateMonitoring();
+                nextAnimationTime = System.currentTimeMillis() + 250;
+            }
+
+            nextWakeUp = Math.min(nextAnimationTime,nextConnectionCheckTime);
             try{
-                Thread.sleep(100);
+                Thread.sleep(Math.max(nextWakeUp - System.currentTimeMillis(),0));
             } catch(InterruptedException ignored){}
         }
     }
@@ -106,38 +112,36 @@ public class Main {
             commands.add("-n");
             commands.add("1");
             int threadIndex = i;
-            workerThreads[i] = new Thread(()->{
-                workerThreadMainLoop(commands, threadIndex);
-            });
+            workerThreads[i] = new Thread(() -> workerThreadMainLoop(commands, threadIndex));
         }
     }
 
     private static void workerThreadMainLoop(List<String> commands, int threadIndex) {
-        while(running.get()){
+        while(true){
             try{
                 LocalDateTime now = LocalDateTime.now();
                 if (!doCommand(commands)){
 
                     disconnection_time[threadIndex] = now;
-                    int expected;
-                    int _new;
+                    int expectedValue;
+                    int newValue;
                     do {
-                        expected = counter.get();
-                        _new = expected+1;
-                    } while(! counter.compareAndSet(expected,_new));
+                        expectedValue = disconnectedCounter.get();
+                        newValue = expectedValue+1;
+                    } while(! disconnectedCounter.compareAndSet(expectedValue,newValue));
 
                     // wait for connection to return
                     List<String> waitingCommands = new ArrayList<>(commands);
                     waitingCommands.set(3,"500");
-                    while(!doCommand(commands)){
+                    while(!doCommand(waitingCommands)){
                         try{
                             Thread.sleep(100);
                         } catch (InterruptedException ignored) {}
                     }
                     do {
-                        expected = counter.get();
-                        _new = expected-1;
-                    } while(! counter.compareAndSet(expected,_new));
+                        expectedValue = disconnectedCounter.get();
+                        newValue = expectedValue-1;
+                    } while(! disconnectedCounter.compareAndSet(expectedValue,newValue));
                     synchronized (disconnection_time[threadIndex]){
                         disconnection_time[threadIndex] = null;
                     }
@@ -187,71 +191,67 @@ public class Main {
         master_gain = config.get("master_gain") == null ? -24.0f : Float.parseFloat(config.get("master_gain"));
     }
 
-    private static void checkIfDisconnected() throws IOException {
+    private static boolean checkConnectionStatus() throws IOException {
 
-        if (counter.get() == addresses.length){
+        if (disconnectedCounter.get() == addresses.length) {
+            if (connected) {
 
-            LocalDateTime first;
-            synchronized (disconnection_time){
+                // get time of disconnection
+                LocalDateTime earliest;
+                synchronized (disconnection_time) {
 
-                // for the small chance that one of the threads resets before
-                // the main thread can log the disconnection
-                for(LocalDateTime t : disconnection_time) if(t == null) return;
+                    // for the small chance that one of the threads resets before
+                    // the main thread can log the disconnection
+                    for (LocalDateTime t : disconnection_time) if (t == null) return false;
 
-                first = disconnection_time[0];
-                for(int i = 1; i < addresses.length;i++){
-                    if(disconnection_time[i].isBefore(first)){
-                        first = disconnection_time[i];
+                    // find the earliest time of disconnection
+                    earliest = disconnection_time[0];
+                    for (int i = 1; i < addresses.length; i++) {
+                        if (disconnection_time[i].isBefore(earliest)) {
+                            earliest = disconnection_time[i];
+                        }
                     }
                 }
+
+                // log the disconnection
+                String timeStamp = getTimestamp(earliest);
+                clearLine();
+                String message = "[%s] Lost connection\n".formatted(timeStamp);
+                System.out.print(message);
+                try (BufferedWriter writer = getLogWriter()) {
+                    writer.write(message);
+                }
+
+                if (disconnect_ping_count > 0) playAudio("disconnect_ping.wav", disconnect_ping_count);
+                connected = false;
+                return true; // signal that connection status changed
             }
+        } else {
+            if(! connected){
 
-            String timestamp = getTimestamp(first);
-            //log the disconnection
-            stopAnimation();
-            String message = "[%s] Lost connection\n".formatted(timestamp);
-            System.out.print(message);
-            try (BufferedWriter writer = getLogWriter()) {
-                writer.write(message);
+                // get time of reconnection
+                LocalDateTime now = LocalDateTime.now();
+                String timestamp = getTimestamp(now);
+
+                // log the reconnection
+                clearLine();
+                String message = "[%s] Found connection\n".formatted(timestamp);
+                System.out.print(message);
+                try (BufferedWriter writer = getLogWriter()) {
+                    writer.write(message);
+                }
+
+                if(connect_ping_count > 0) playAudio("connect_ping.wav",connect_ping_count);
+                connected = true;
+                return true; // signal that connection status changed
             }
-            startAnimation();
-
-            if(disconnect_ping_count > 0) playAudio("disconnect_ping.wav",disconnect_ping_count);
-
-            // wait for connection to return
-            while(counter.get() == addresses.length){
-                try {
-                    Thread.sleep(100);
-                } catch (InterruptedException ignored) {}
-            }
-
-            //log the reconnection
-            stopAnimation();
-            LocalDateTime now = LocalDateTime.now();
-            timestamp = getTimestamp(now);
-            message = "[%s] Found connection\n".formatted(timestamp);
-            System.out.print(message);
-            try (BufferedWriter writer = getLogWriter()) {
-                writer.write(message);
-            }
-            startAnimation();
-
-            if(connect_ping_count > 0) playAudio("connect_ping.wav",connect_ping_count);
         }
+        return false; // signal that connection status has not changed
     }
 
-    private static void startAnimation() {
-        shouldAnimate.set(true);
-        animator.interrupt();
-    }
-
-    private static void stopAnimation() {
-        shouldAnimate.set(false);
-        while(animating.get()){
-            try {
-                Thread.sleep(10);
-            } catch (InterruptedException ignored) {}
-        }
+    private static void clearLine() {
+        System.out.print(lastMsg.replaceAll("."," "));
+        System.out.print('\r');
     }
 
     private static BufferedWriter getLogWriter() throws IOException {
@@ -318,30 +318,13 @@ public class Main {
     }
 
     private static void animateMonitoring() {
-        String msg = "";
-        Object o = new Object();
-        while(running.get()){
-            animating.set(true);
-            while(shouldAnimate.get()){
-                msg = "\rMonitoring [ "+ symbol+" ]";
-                for (int i = 0; i< addresses.length;i++){
-                    msg += " - "+addresses[i]+" [ %s ]".formatted(disconnection_time[i] == null ? "OK" : "XX");
-                }
-                System.out.print(msg);
-                symbol = getNextSymbol(symbol);
-                try{
-                    Thread.sleep(250);
-                } catch(InterruptedException ignored){}
-            }
-            System.out.print(msg.replaceAll("."," "));
-            System.out.print('\r');
-            try {
-                animating.set(false);
-                synchronized (o){
-                    o.wait();
-                }
-            } catch (InterruptedException ignored) {}
+        String msg = "\rMonitoring [ "+ symbol+" ]";
+        for (int i = 0; i< addresses.length;i++){
+            msg += " - "+addresses[i]+" [ %s ]".formatted(disconnection_time[i] == null ? "OK" : "XX");
         }
+        System.out.print(msg);
+        lastMsg = msg;
+        symbol = getNextSymbol(symbol);
     }
 
     private static void playAudio(String fileName,int count){
