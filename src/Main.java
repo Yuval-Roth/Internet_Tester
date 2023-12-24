@@ -409,12 +409,14 @@ public class Main {
     {
         String s;
         ProcessBuilder pb = new ProcessBuilder(command);
+        LocalDateTime now = LocalDateTime.now();
         Process process = pb.start();
         BufferedReader stdInput = new BufferedReader(new InputStreamReader(process.getInputStream()));
 
         if(enable_debug_log){
             synchronized (debugLogLock){
-                logDebug("["+getTimestamp(LocalDateTime.now())+"]");
+
+                logDebug("["+getTimestamp(now)+"]");
                 while ((s = stdInput.readLine()) != null) {
                     logDebug(s+"\n");
                     if (notConnected(s)) return false;
