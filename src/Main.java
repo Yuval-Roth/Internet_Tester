@@ -338,7 +338,7 @@ public class Main {
         if(timeOfDisconnection != null){
             if(connected) {
                 synchronized (timeOfDisconnectionLock){
-                    if(timeOfDisconnection.isBefore(LocalDateTime.now().minusSeconds(timeout*1000 + 1000))){
+                    if(timeOfDisconnection.isBefore(LocalDateTime.now().minusSeconds(timeout/1000 + 1))){
                         timeOfDisconnection = null;
                     }
                 }
