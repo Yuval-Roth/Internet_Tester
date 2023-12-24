@@ -82,6 +82,7 @@ public class Main {
                 log(message);
 
                 // start
+                running = true;
                 for(Thread t : workerThreads) t.start();
                 mainLoop();
 
@@ -252,7 +253,7 @@ public class Main {
         }
 
         boolean stateChanged = false;
-        
+
         if (disconnectedCounter.get() == addresses.length) {
             if (connected) {
 
