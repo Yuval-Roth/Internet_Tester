@@ -12,6 +12,7 @@ public class Main {
     public static final String DEFAULT_CONNECT_PING_COUNT = "1";
     public static final String DEFAULT_MASTER_GAIN = "-24.0";
     public static final String DEFAULT_ENABLE_DEBUG_LOG = "false";
+    public static final String DEFAULT_TEST_INTERVAL = "1000";
     public static final String DEFAULT_CONFIG_FILE = """
             # READ ME:
             # Editing this config will take up to 60 seconds to take effect
@@ -36,16 +37,16 @@ public class Main {
             # Enable debug logging or not
             # The debug log can get really big really fast
             enable_debug_log: %s
+            
+            # Time between pings in milliseconds
+            test_interval: %s
             """.formatted(
             DEFAULT_TIMEOUT,
             DEFAULT_DISCONNECT_PING_COUNT,
             DEFAULT_CONNECT_PING_COUNT,
             DEFAULT_MASTER_GAIN,
-            DEFAULT_ENABLE_DEBUG_LOG);
-    public static final long SLEEP_TIME_BETWEEN_CONNECTION_CHECKS = 100;
-    public static final long ONE_MINUTE = 1000 * 60;
-    public static final long SLEEP_TIME_BETWEEN_ANIMATION_UPDATES = 250;
-    public static final long SLEEP_TIME_BETWEEN_PINGS = 1000;
+            DEFAULT_ENABLE_DEBUG_LOG,
+            DEFAULT_TEST_INTERVAL);
     private static String[] addresses;
     private static boolean[] addressStatus;
     private static char symbol = '|';
@@ -56,6 +57,7 @@ public class Main {
     private static float master_gain;
     private static int connect_ping_count;
     private static boolean enable_debug_log;
+    private static int test_interval;
     private static Thread[] workerThreads;
     private static Exception[] workerThreadExceptions;
     private static Object timeOfDisconnectionLock;
@@ -65,6 +67,9 @@ public class Main {
     private static LocalDateTime timeOfDisconnection;
     private static boolean running;
     private static Object debugLogLock;
+    public static final long SLEEP_TIME_BETWEEN_CONNECTION_CHECKS = 100;
+    public static final long ONE_MINUTE = 1000 * 60;
+    public static final long SLEEP_TIME_BETWEEN_ANIMATION_UPDATES = 250;
 
     public static void main(String[] args)  {
 
@@ -232,7 +237,7 @@ public class Main {
             }
             if(running){
                 try {
-                    Thread.sleep(SLEEP_TIME_BETWEEN_PINGS);
+                    Thread.sleep(test_interval);
                 } catch (InterruptedException ignored) {}
             }
         }
@@ -276,6 +281,7 @@ public class Main {
         connect_ping_count = Integer.parseInt(config.getOrDefault("connect_ping_count", DEFAULT_CONNECT_PING_COUNT));
         master_gain = Float.parseFloat(config.getOrDefault("master_gain", DEFAULT_MASTER_GAIN));
         enable_debug_log = Boolean.parseBoolean(config.getOrDefault("enable_debug_log",DEFAULT_ENABLE_DEBUG_LOG));
+        test_interval = Integer.parseInt(config.getOrDefault("test_interval",DEFAULT_TEST_INTERVAL));
     }
 
     private static boolean checkConnectionStatus() throws IOException {
