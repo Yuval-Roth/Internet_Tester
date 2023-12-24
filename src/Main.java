@@ -38,7 +38,7 @@ public class Main {
             # The debug log can get really big really fast
             enable_debug_log: %s
             
-            # Time between pings in milliseconds
+            # Time between connection tests in milliseconds
             test_interval: %s
             """.formatted(
             DEFAULT_TIMEOUT,
