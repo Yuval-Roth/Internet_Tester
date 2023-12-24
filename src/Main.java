@@ -55,6 +55,7 @@ public class Main {
     private static boolean connected;
     private static String lastMsg;
     private static LocalDateTime timeOfDisconnection;
+    private static boolean running;
 
     public static void main(String[] args)  {
 
@@ -86,6 +87,12 @@ public class Main {
 
             } catch (Exception e){
                 String timestamp = getTimestamp(LocalDateTime.now());
+                running = false;
+                for(Thread t:workerThreads) {
+                    try {
+                        t.join();
+                    } catch (InterruptedException ignored) {}
+                }
                 String message = timestamp+": "+ e +"\n";
                 try(BufferedWriter writer = getWriter("error-log")){
                     writer.write(message);
@@ -153,7 +160,7 @@ public class Main {
     }
 
     private static void workerThreadMainLoop(List<String> commands, int threadIndex) {
-        while(true){
+        while(running){
             try{
                 LocalDateTime now = LocalDateTime.now();
                 if (!doCommand(commands)){
@@ -176,7 +183,7 @@ public class Main {
                     // wait for connection to return
                     List<String> waitingCommands = new ArrayList<>(commands);
                     waitingCommands.set(3,"500");
-                    while(!doCommand(waitingCommands)){
+                    while(running && !doCommand(waitingCommands)){
                         try{
                             Thread.sleep(SLEEP_TIME_BETWEEN_CONNECTION_CHECKS);
                         } catch (InterruptedException ignored) {}
@@ -237,6 +244,11 @@ public class Main {
     }
 
     private static boolean checkConnectionStatus() throws IOException {
+
+        // catch illegal value of counter and multi-threading issues
+        if(disconnectedCounter.get() < 0 || disconnectedCounter.get() > addresses.length){
+            throw new IllegalStateException("disconnected counter illegal count: "+disconnectedCounter.get());
+        }
 
         if (disconnectedCounter.get() == addresses.length) {
             if (connected) {
