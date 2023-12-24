@@ -229,6 +229,14 @@ public class Main {
                         expectedValue = disconnectedCounter.get();
                         newValue = expectedValue-1;
                     } while(! disconnectedCounter.compareAndSet(expectedValue,newValue));
+
+                    synchronized (timeOfDisconnectionLock){
+                        if(connected){
+                            if(timeOfDisconnection == now) {
+                                timeOfDisconnection = null;
+                            }
+                        }
+                    }
                 }
             } catch (Exception e){
                 running = false;
@@ -335,10 +343,10 @@ public class Main {
         // if that time passes the timeout period plus one second but the other connections are fine
         // it's safe to assume that it is a problem with the address and not with the connection.
         // So we reset the time of disconnection.
-        if(timeOfDisconnection != null){
-            if(connected) {
-                synchronized (timeOfDisconnectionLock){
-                    if(timeOfDisconnection.isBefore(LocalDateTime.now().minusSeconds(timeout/1000 + 1))){
+        synchronized (timeOfDisconnectionLock){
+            if(timeOfDisconnection != null){
+                if(connected) {
+                    if(timeOfDisconnection.isBefore(LocalDateTime.now().minusSeconds((long)Math.ceil(timeout/1000.0) + 2))){
                         timeOfDisconnection = null;
                     }
                 }
