@@ -57,6 +57,7 @@ public class Main {
     private static int connect_ping_count;
     private static boolean enable_debug_log;
     private static Thread[] workerThreads;
+    private static Exception[] workerThreadExceptions;
     private static Object timeOfDisconnectionLock;
     private static AtomicInteger disconnectedCounter;
     private static boolean connected;
@@ -73,6 +74,7 @@ public class Main {
                 addresses = args;
                 workerThreads = new Thread[addresses.length];
                 addressStatus = new boolean[addresses.length];
+                workerThreadExceptions = new Exception[addresses.length];
                 Arrays.fill(addressStatus,true);
                 clip = AudioSystem.getClip();
                 disconnectedCounter = new AtomicInteger(0);
@@ -96,6 +98,7 @@ public class Main {
                 mainLoop();
 
             } catch (Exception e){
+                System.out.println();
                 String timestamp = getTimestamp(LocalDateTime.now());
                 running = false;
                 for(Thread t:workerThreads) {
@@ -154,10 +157,20 @@ public class Main {
                 nextReadConfigTime = System.currentTimeMillis() + ONE_MINUTE;
             }
 
+            checkForExceptionInWorkerThreads();
+
             nextWakeUp = Math.min(nextAnimationTime,nextConnectionCheckTime);
             try{
                 Thread.sleep(Math.max(nextWakeUp - System.currentTimeMillis(),0));
             } catch(InterruptedException ignored){}
+        }
+    }
+
+    private static void checkForExceptionInWorkerThreads() {
+        for(int i = 0; i < addresses.length ; i++){
+            if(workerThreadExceptions[i] != null) {
+                throw new RuntimeException("Exception in worker threads");
+            }
         }
     }
 
@@ -212,12 +225,16 @@ public class Main {
                         newValue = expectedValue-1;
                     } while(! disconnectedCounter.compareAndSet(expectedValue,newValue));
                 }
-            } catch (IOException e){
+            } catch (Exception e){
+                running = false;
+                workerThreadExceptions[threadIndex] = e;
                 throw new RuntimeException(e);
             }
-            try {
-                Thread.sleep(SLEEP_TIME_BETWEEN_PINGS);
-            } catch (InterruptedException ignored) {}
+            if(running){
+                try {
+                    Thread.sleep(SLEEP_TIME_BETWEEN_PINGS);
+                } catch (InterruptedException ignored) {}
+            }
         }
     }
 
