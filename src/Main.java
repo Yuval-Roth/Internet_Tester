@@ -11,6 +11,7 @@ public class Main {
     public static final String DEFAULT_DISCONNECT_PING_COUNT = "1";
     public static final String DEFAULT_CONNECT_PING_COUNT = "1";
     public static final String DEFAULT_MASTER_GAIN = "-24.0";
+    public static final String DEFAULT_ENABLE_DEBUG_LOG = "false";
     public static final String DEFAULT_CONFIG_FILE = """
             # READ ME:
             # Editing this config will take up to 60 seconds to take effect
@@ -19,23 +20,28 @@ public class Main {
             # Deleting lines in this file will make the program use the default values for these settings
             # Deleting the config file will regenerate a new one
             
-            # lines that start with '#' are ignored
+            # Lines that start with '#' are ignored
             
-            # timeout in milliseconds
+            # Timeout in milliseconds
             timeout: %s
             
             # The number of times it will make a ping sound when connecting / disconnecting
-            # setting these values to 0 will disable ping sounds
+            # Setting these values to 0 will disable ping sounds
             disconnect_ping_count: %s
             connect_ping_count: %s
             
-            # volume of the pings (dB scale)
+            # Volume of the pings (dB scale)
             master_gain: %s
+            
+            # Enable debug logging or not
+            # The debug log can get really big really fast
+            enable_debug_log: %s
             """.formatted(
             DEFAULT_TIMEOUT,
             DEFAULT_DISCONNECT_PING_COUNT,
             DEFAULT_CONNECT_PING_COUNT,
-            DEFAULT_MASTER_GAIN);
+            DEFAULT_MASTER_GAIN,
+            DEFAULT_ENABLE_DEBUG_LOG);
     public static final long SLEEP_TIME_BETWEEN_CONNECTION_CHECKS = 100;
     public static final long ONE_MINUTE = 1000 * 60;
     public static final long SLEEP_TIME_BETWEEN_ANIMATION_UPDATES = 250;
@@ -49,6 +55,7 @@ public class Main {
     private static Integer disconnect_ping_count;
     private static float master_gain;
     private static int connect_ping_count;
+    private static boolean enable_debug_log;
     private static Thread[] workerThreads;
     private static Object timeOfDisconnectionLock;
     private static AtomicInteger disconnectedCounter;
@@ -56,6 +63,7 @@ public class Main {
     private static String lastMsg;
     private static LocalDateTime timeOfDisconnection;
     private static boolean running;
+    private static Object debugLogLock;
 
     public static void main(String[] args)  {
 
@@ -71,6 +79,7 @@ public class Main {
                 connected = true;
                 lastMsg = "";
                 timeOfDisconnectionLock = new Object();
+                debugLogLock = new Object();
                 // ==================================
 
                 readConfig();
@@ -108,6 +117,13 @@ public class Main {
     private static void log(String message) throws IOException {
         System.out.print(message);
         try (BufferedWriter writer = getLogWriter()) {
+            writer.write(message);
+        }
+    }
+    private static void logDebug(String message) throws IOException {
+
+        String stamp = getAddressesStamp().replace("\"","").replace(","," - ");
+        try (BufferedWriter writer = getWriter("debug log - " + stamp + ".txt")) {
             writer.write(message);
         }
     }
@@ -242,6 +258,7 @@ public class Main {
         disconnect_ping_count = Integer.parseInt(config.getOrDefault("disconnect_ping_count", DEFAULT_DISCONNECT_PING_COUNT));
         connect_ping_count = Integer.parseInt(config.getOrDefault("connect_ping_count", DEFAULT_CONNECT_PING_COUNT));
         master_gain = Float.parseFloat(config.getOrDefault("master_gain", DEFAULT_MASTER_GAIN));
+        enable_debug_log = Boolean.parseBoolean(config.getOrDefault("enable_debug_log",DEFAULT_ENABLE_DEBUG_LOG));
     }
 
     private static boolean checkConnectionStatus() throws IOException {
@@ -371,9 +388,22 @@ public class Main {
         ProcessBuilder pb = new ProcessBuilder(command);
         Process process = pb.start();
         BufferedReader stdInput = new BufferedReader(new InputStreamReader(process.getInputStream()));
-        while ((s = stdInput.readLine()) != null) {
-            if (notConnected(s)) return false;
+
+        if(enable_debug_log){
+            synchronized (debugLogLock){
+                logDebug("["+getTimestamp(LocalDateTime.now())+"]");
+                while ((s = stdInput.readLine()) != null) {
+                    logDebug(s+"\n");
+                    if (notConnected(s)) return false;
+                }
+                logDebug("\n");
+            }
+        } else {
+            while ((s = stdInput.readLine()) != null) {
+                if (notConnected(s)) return false;
+            }
         }
+
         return true;
     }
 
