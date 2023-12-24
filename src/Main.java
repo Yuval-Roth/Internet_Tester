@@ -245,11 +245,14 @@ public class Main {
 
     private static boolean checkConnectionStatus() throws IOException {
 
+
         // catch illegal value of counter and multi-threading issues
         if(disconnectedCounter.get() < 0 || disconnectedCounter.get() > addresses.length){
             throw new IllegalStateException("disconnected counter illegal count: "+disconnectedCounter.get());
         }
 
+        boolean stateChanged = false;
+        
         if (disconnectedCounter.get() == addresses.length) {
             if (connected) {
 
@@ -261,7 +264,7 @@ public class Main {
 
                 if (disconnect_ping_count > 0) playAudio("disconnect_ping.wav", disconnect_ping_count);
                 connected = false;
-                return true; // signal that connection status changed
+                stateChanged = true; // signal that connection status changed
             }
         } else {
             if(! connected){
@@ -281,7 +284,7 @@ public class Main {
                 synchronized (timeOfDisconnectionLock){
                     timeOfDisconnection = null;
                 }
-                return true; // signal that connection status changed
+                stateChanged = true; // signal that connection status changed
             }
         }
 
@@ -301,7 +304,7 @@ public class Main {
             }
         }
 
-        return false; // signal that connection status has not changed
+        return stateChanged;
     }
 
     private static String getTimeDiff(LocalDateTime from,LocalDateTime to) {
