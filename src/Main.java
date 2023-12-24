@@ -1,33 +1,45 @@
 
 import javax.sound.sampled.*;
 import java.io.*;
-import java.time.LocalDateTime;
+import java.time.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class Main {
 
+    public static final String DEFAULT_TIMEOUT = "4000";
+    public static final String DEFAULT_DISCONNECT_PING_COUNT = "1";
+    public static final String DEFAULT_CONNECT_PING_COUNT = "1";
+    public static final String DEFAULT_MASTER_GAIN = "-24.0";
     public static final String DEFAULT_CONFIG_FILE = """
-            # editing this config will take up to 60 seconds to take effect
-            # there is no need to restart the program after changing these values
+            # READ ME:
+            # Editing this config will take up to 60 seconds to take effect
+            # There is no need to restart the program after changing these values
+            
+            # Deleting lines in this file will make the program use the default values for these settings
+            # Deleting the config file will regenerate a new one
+            
+            # lines that start with '#' are ignored
             
             # timeout in milliseconds
-            timeout: 4000
-            
-            # volume
-            master_gain: -24.0
+            timeout: %s
             
             # The number of times it will make a ping sound when connecting / disconnecting
             # setting these values to 0 will disable ping sounds
-            disconnect_ping_count: 1
-            connect_ping_count: 1
+            disconnect_ping_count: %s
+            connect_ping_count: %s
             
-            # lines that start with '#' are ignored
-            """;
-    public static final int SLEEP_TIME_BETWEEN_CONNECTION_CHECKS = 100;
-    public static final int ONE_MINUTE = 1000 * 60;
-    public static final int SLEEP_TIME_BETWEEN_ANIMATION_UPDATES = 250;
-    public static final int SLEEP_TIME_BETWEEN_PINGS = 1000;
+            # volume of the pings (dB scale)
+            master_gain: %s
+            """.formatted(
+            DEFAULT_TIMEOUT,
+            DEFAULT_DISCONNECT_PING_COUNT,
+            DEFAULT_CONNECT_PING_COUNT,
+            DEFAULT_MASTER_GAIN);
+    public static final long SLEEP_TIME_BETWEEN_CONNECTION_CHECKS = 100;
+    public static final long ONE_MINUTE = 1000 * 60;
+    public static final long SLEEP_TIME_BETWEEN_ANIMATION_UPDATES = 250;
+    public static final long SLEEP_TIME_BETWEEN_PINGS = 1000;
     private static String[] addresses;
     private static boolean[] addressStatus;
     private static char symbol = '|';
@@ -61,16 +73,12 @@ public class Main {
                 // ==================================
 
                 readConfig();
-                initGlobalVariables();
                 initWorkerThreads();
 
                 // print start message
                 String timestamp = getTimestamp(LocalDateTime.now());
                 String message = "\n[%s] Started logging connection to %s with timeout of %s\n".formatted(timestamp, getAddressesStamp() ,timeout);
-                System.out.print(message);
-                try (BufferedWriter writer = getLogWriter()) {
-                    writer.write(message);
-                }
+                log(message);
 
                 // start
                 for(Thread t : workerThreads) t.start();
@@ -89,8 +97,14 @@ public class Main {
         }
     }
 
-    private static void mainLoop() throws IOException {
+    private static void log(String message) throws IOException {
+        System.out.print(message);
+        try (BufferedWriter writer = getLogWriter()) {
+            writer.write(message);
+        }
+    }
 
+    private static void mainLoop() throws IOException {
         long nextConnectionCheckTime = System.currentTimeMillis();
         long nextAnimationTime = System.currentTimeMillis();
         long nextReadConfigTime = System.currentTimeMillis() + ONE_MINUTE;
@@ -113,7 +127,6 @@ public class Main {
             // check for changes in the config file
             if(System.currentTimeMillis() >= nextReadConfigTime){
                 readConfig();
-                initGlobalVariables();
                 nextReadConfigTime = System.currentTimeMillis() + ONE_MINUTE;
             }
 
@@ -213,13 +226,14 @@ public class Main {
             };
             readConfig();
         }
+        initGlobalVariables();
     }
 
     private static void initGlobalVariables() {
-        timeout = config.get("timeout") == null ? 4000 : Integer.parseInt(config.get("timeout"));
-        disconnect_ping_count = config.get("disconnect_ping_count") == null ? 1 : Integer.parseInt(config.get("disconnect_ping_count"));
-        connect_ping_count = config.get("connect_ping_count") == null ? 1 : Integer.parseInt(config.get("connect_ping_count"));
-        master_gain = config.get("master_gain") == null ? -24.0f : Float.parseFloat(config.get("master_gain"));
+        timeout = Integer.parseInt(config.getOrDefault("timeout", DEFAULT_TIMEOUT));
+        disconnect_ping_count = Integer.parseInt(config.getOrDefault("disconnect_ping_count", DEFAULT_DISCONNECT_PING_COUNT));
+        connect_ping_count = Integer.parseInt(config.getOrDefault("connect_ping_count", DEFAULT_CONNECT_PING_COUNT));
+        master_gain = Float.parseFloat(config.getOrDefault("master_gain", DEFAULT_MASTER_GAIN));
     }
 
     private static boolean checkConnectionStatus() throws IOException {
@@ -231,10 +245,7 @@ public class Main {
                 String timeStamp = getTimestamp(timeOfDisconnection);
                 clearLine();
                 String message = "[%s] Lost connection\n".formatted(timeStamp);
-                System.out.print(message);
-                try (BufferedWriter writer = getLogWriter()) {
-                    writer.write(message);
-                }
+                log(message);
 
                 if (disconnect_ping_count > 0) playAudio("disconnect_ping.wav", disconnect_ping_count);
                 connected = false;
@@ -246,14 +257,12 @@ public class Main {
                 // get time of reconnection
                 LocalDateTime now = LocalDateTime.now();
                 String timestamp = getTimestamp(now);
+                String timeDiff = getTimeDiff(timeOfDisconnection,now);
 
                 // log the reconnection
                 clearLine();
-                String message = "[%s] Found connection\n".formatted(timestamp);
-                System.out.print(message);
-                try (BufferedWriter writer = getLogWriter()) {
-                    writer.write(message);
-                }
+                String message = "[%s] Found connection after %s\n".formatted(timestamp,timeDiff);
+                log(message);
 
                 if(connect_ping_count > 0) playAudio("connect_ping.wav",connect_ping_count);
                 connected = true;
@@ -281,6 +290,32 @@ public class Main {
         }
 
         return false; // signal that connection status has not changed
+    }
+
+    private static String getTimeDiff(LocalDateTime from,LocalDateTime to) {
+        Duration diff = Duration.between(from, to);
+        long hours = diff.toHours();
+        int minutes = diff.toMinutesPart();
+        int seconds = diff.toSecondsPart();
+
+        StringBuilder output = new StringBuilder();
+        if(hours > 0){
+            output.append(hours).append(" hours");
+            if(minutes > 0 || seconds > 0) {
+                output.append(", ");
+            }
+        }
+        if(minutes > 0){
+            output.append(minutes).append(" minutes");
+            if(seconds > 0) {
+                output.append(", ");
+            }
+        }
+        if(seconds > 0){
+            output.append(seconds).append(" seconds");
+        }
+
+        return output.toString();
     }
 
     private static void clearLine() {
