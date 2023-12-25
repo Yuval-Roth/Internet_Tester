@@ -94,7 +94,7 @@ public class Main {
         // argument check
         if(args.length == 0) {
             System.out.println("Error: no arguments received");
-            System.out.println("  see \"usage instructions.txt\"");
+            System.out.println("  see \"instructions.txt\"");
             System.out.println("\n\npress enter to exit");
             Scanner s = new Scanner(System.in);
             s.nextLine();
