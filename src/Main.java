@@ -259,7 +259,7 @@ public class Main {
         output.deleteCharAt(output.length()-1); // remove the last '\n'
 
         if (enable_debug_log){
-            String debugMsg = "[%s]\n%s\n".formatted(getTimestamp(now),output.toString());
+            String debugMsg = "[%s]%s\n\n".formatted(getTimestamp(now),output.toString());
             logDebug(debugMsg);
         }
         return !notConnected(output.toString());
