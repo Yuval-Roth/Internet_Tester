@@ -73,6 +73,15 @@ public class Main {
 
     public static void main(String[] args)  {
 
+        if(args.length == 0) {
+            System.out.println("Error: no arguments received");
+            System.out.println("  see \"how to run.txt\"");
+            System.out.println("\n\npress enter to exit");
+            Scanner s = new Scanner(System.in);
+            s.nextLine();
+            return;
+        }
+
         while(true){
             try{
                 // ==== initialize basic fields =====
