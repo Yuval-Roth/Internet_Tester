@@ -7,6 +7,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class Main {
 
+    // < CONSTANTS >
+    private static final long SLEEP_TIME_BETWEEN_CONNECTION_CHECKS = 100;
+    private static final long ONE_MINUTE = 1000 * 60;
+    private static final long SLEEP_TIME_BETWEEN_ANIMATION_UPDATES = 250;
+    // < CONSTANTS />
+
+    // < DEFAULTS >
     public static final String DEFAULT_TIMEOUT = "4000";
     public static final String DEFAULT_DISCONNECT_PING_COUNT = "1";
     public static final String DEFAULT_CONNECT_PING_COUNT = "1";
@@ -47,32 +54,44 @@ public class Main {
             DEFAULT_MASTER_GAIN,
             DEFAULT_ENABLE_DEBUG_LOG,
             DEFAULT_TEST_INTERVAL);
-    private static String[] addresses;
-    private static boolean[] addressStatus;
-    private static char symbol = '|';
-    private static Clip clip;
+    // < DEFAULTS />
+
+    // < GLOBAL VARIABLES >
     private static Map<String, String> config;
     private static Integer timeout;
     private static Integer disconnect_ping_count;
-    private static float master_gain;
     private static int connect_ping_count;
+    private static float master_gain;
     private static boolean enable_debug_log;
     private static int test_interval;
+    // < GLOBAL VARIABLES />
+
+    // < THREADS RELATED >
     private static Thread[] workerThreads;
     private static Exception[] workerThreadExceptions;
+    private static boolean[] addressStatus;
+    private static boolean running;
+    // < THREADS RELATED />
+
+    // < LOCKS >
     private static Object timeOfDisconnectionLock;
+    private static Object debugLogLock;
+    private static Object errorLogLock;
+    // < LOCKS />
+
+    // < GENERAL APPLICATION DATA >
+    private static String[] addresses;
+    private static char symbol = '|';
+    private static Clip clip;
     private static AtomicInteger disconnectedCounter;
     private static boolean connected;
     private static String lastMsg;
     private static LocalDateTime timeOfDisconnection;
-    private static boolean running;
-    private static Object debugLogLock;
-    public static final long SLEEP_TIME_BETWEEN_CONNECTION_CHECKS = 100;
-    public static final long ONE_MINUTE = 1000 * 60;
-    public static final long SLEEP_TIME_BETWEEN_ANIMATION_UPDATES = 250;
+    // < GENERAL APPLICATION DATA >
 
     public static void main(String[] args)  {
 
+        // argument check
         if(args.length == 0) {
             System.out.println("Error: no arguments received");
             System.out.println("  see \"how to run.txt\"");
@@ -96,6 +115,7 @@ public class Main {
                 lastMsg = "";
                 timeOfDisconnectionLock = new Object();
                 debugLogLock = new Object();
+                errorLogLock = new Object();
                 // ==================================
 
                 readConfig();
@@ -104,7 +124,7 @@ public class Main {
                 // print start message
                 String timestamp = getTimestamp(LocalDateTime.now());
                 String message = "\n[%s] Started logging connection to %s with timeout of %s\n".formatted(timestamp, getAddressesStamp() ,timeout);
-                log(message);
+                logInternet(message);
 
                 // start
                 running = true;
@@ -112,38 +132,22 @@ public class Main {
                 mainLoop();
 
             } catch (Exception e){
-                System.out.println();
                 String timestamp = getTimestamp(LocalDateTime.now());
-                running = false;
-                for(Thread t:workerThreads) {
-                    try {
-                        t.join();
-                    } catch (InterruptedException ignored) {}
-                }
+                stopWorkerThreads();
                 String message = timestamp+": "+ e +"\n";
-                try(BufferedWriter writer = getWriter("error-log")){
-                    writer.write(message);
+                try {
+                    logError(message);
                 } catch (IOException ignored) {}
-                System.out.println(message);
                 e.printStackTrace();
+                System.out.println("\n"+message);
                 System.out.println("Restarting...\n\n\n\n");
             }
         }
     }
 
-    private static void log(String message) throws IOException {
-        System.out.print(message);
-        try (BufferedWriter writer = getLogWriter()) {
-            writer.write(message);
-        }
-    }
-    private static void logDebug(String message) throws IOException {
-
-        String stamp = getAddressesStamp().replace("\"","").replace(","," - ");
-        try (BufferedWriter writer = getWriter("debug log - " + stamp + ".txt")) {
-            writer.write(message);
-        }
-    }
+    //========================================================================== |
+    //============================ MAIN LOOPS ================================== |
+    //========================================================================== |
 
     private static void mainLoop() throws IOException {
         long nextConnectionCheckTime = System.currentTimeMillis();
@@ -180,34 +184,11 @@ public class Main {
         }
     }
 
-    private static void checkForExceptionInWorkerThreads() {
-        for(int i = 0; i < addresses.length ; i++){
-            if(workerThreadExceptions[i] != null) {
-                throw new RuntimeException("Exception in worker threads");
-            }
-        }
-    }
-
-    private static void initWorkerThreads() {
-        for(int i = 0; i < addresses.length; i++){
-            // create the ping command as a list of strings
-            List<String> commands = new ArrayList<String>();
-            commands.add("ping");
-            commands.add(addresses[i]);
-            commands.add("-w");
-            commands.add((timeout)+"");
-            commands.add("-n");
-            commands.add("1");
-            int threadIndex = i;
-            workerThreads[i] = new Thread(() -> workerThreadMainLoop(commands, threadIndex));
-        }
-    }
-
     private static void workerThreadMainLoop(List<String> commands, int threadIndex) {
         while(running){
             try{
                 LocalDateTime now = LocalDateTime.now();
-                if (!doCommand(commands)){
+                if (!doPing(commands)){
 
                     synchronized (timeOfDisconnectionLock){
                         if(timeOfDisconnection == null || timeOfDisconnection.isAfter(now)){
@@ -215,94 +196,76 @@ public class Main {
                         }
                     }
 
-                    int expectedValue;
-                    int newValue;
-
                     addressStatus[threadIndex] = false;
-                    do {
-                        expectedValue = disconnectedCounter.get();
-                        newValue = expectedValue+1;
-                    } while(! disconnectedCounter.compareAndSet(expectedValue,newValue));
+                    addToDisconnectedCounter(1);
 
                     // wait for connection to return
                     List<String> waitingCommands = new ArrayList<>(commands);
-                    waitingCommands.set(3,"500");
-                    while(running && !doCommand(waitingCommands)){
+                    waitingCommands.set(3,"500"); // set the timeout to 500ms
+                    while(running && !doPing(waitingCommands)){
                         try{
                             Thread.sleep(SLEEP_TIME_BETWEEN_CONNECTION_CHECKS);
                         } catch (InterruptedException ignored) {}
                     }
 
                     addressStatus[threadIndex] = true;
-                    do {
-                        expectedValue = disconnectedCounter.get();
-                        newValue = expectedValue-1;
-                    } while(! disconnectedCounter.compareAndSet(expectedValue,newValue));
+                    addToDisconnectedCounter(-1);
 
+                    // reset the time of disconnection if only this thread got disconnected
                     synchronized (timeOfDisconnectionLock){
                         if(connected){
-                            if(timeOfDisconnection == now) {
+                            if(timeOfDisconnection == now) { // prevent unexpected interactions with other threads
                                 timeOfDisconnection = null;
                             }
                         }
                     }
                 }
+
+                if(running){
+                    try {
+                        Thread.sleep(test_interval);
+                    } catch (InterruptedException ignored) {}
+                }
             } catch (Exception e){
-                running = false;
+                LocalDateTime now = LocalDateTime.now();
+                try {
+                    logError("[%s]\n%s\n".formatted(getTimestamp(now),e.toString()));
+                } catch (IOException ignored) {}
+                // Tell the main thread of the exception
                 workerThreadExceptions[threadIndex] = e;
                 throw new RuntimeException(e);
             }
-            if(running){
-                try {
-                    Thread.sleep(test_interval);
-                } catch (InterruptedException ignored) {}
-            }
         }
     }
 
 
-    private static String getAddressesStamp() {
-        StringBuilder builder = new StringBuilder();
-        for (String address : addresses) {
-            builder.append("\"").append(address).append("\"").append(",");
+    //========================================================================== |
+    //====================== PROGRAM FLOW FUNCTIONS ============================ |
+    //========================================================================== |
+    private static boolean doPing(List<String> command)
+            throws IOException
+    {
+        ProcessBuilder pb = new ProcessBuilder(command);
+        LocalDateTime now = LocalDateTime.now();
+        Process process = pb.start();
+        BufferedReader stdInput = new BufferedReader(new InputStreamReader(process.getInputStream()));
+
+        // get output
+        String s;
+        StringBuilder output = new StringBuilder();
+        while ((s = stdInput.readLine()) != null) {
+            output.append(s).append("\n");
         }
-        builder.deleteCharAt(builder.length()-1);
-        return builder.toString();
-    }
+        output.deleteCharAt(output.length()-1); // remove the last '\n'
 
-    private static void readConfig() throws IOException {
-
-        config = new HashMap<>();
-
-        try (BufferedReader configFile = new BufferedReader(new FileReader(getFolderPath()+"config.txt"))) {
-            String line;
-            while ((line = configFile.readLine()) != null){
-                if(line.contains(":") && line.charAt(0) != '#'){
-                    String key = line.substring(0,line.indexOf(":")).strip().toLowerCase();
-                    String value = line.substring((line.indexOf(":")+1)).strip().toLowerCase();
-                    config.put(key,value);
-                }
-            }
-        } catch (FileNotFoundException e){
-            try(BufferedWriter writer = getWriter("config.txt")){
-                writer.write(DEFAULT_CONFIG_FILE);
-            };
-            readConfig();
+        if (enable_debug_log){
+            String debugMsg = "[%s]\n%s\n".formatted(getTimestamp(now),output.toString());
+            logDebug(debugMsg);
         }
-        initGlobalVariables();
-    }
-
-    private static void initGlobalVariables() {
-        timeout = Integer.parseInt(config.getOrDefault("timeout", DEFAULT_TIMEOUT));
-        disconnect_ping_count = Integer.parseInt(config.getOrDefault("disconnect_ping_count", DEFAULT_DISCONNECT_PING_COUNT));
-        connect_ping_count = Integer.parseInt(config.getOrDefault("connect_ping_count", DEFAULT_CONNECT_PING_COUNT));
-        master_gain = Float.parseFloat(config.getOrDefault("master_gain", DEFAULT_MASTER_GAIN));
-        enable_debug_log = Boolean.parseBoolean(config.getOrDefault("enable_debug_log",DEFAULT_ENABLE_DEBUG_LOG));
-        test_interval = Integer.parseInt(config.getOrDefault("test_interval",DEFAULT_TEST_INTERVAL));
+        return !notConnected(output.toString());
     }
 
     private static boolean checkConnectionStatus() throws IOException {
-
 
         // catch illegal value of counter and multi-threading issues
         if(disconnectedCounter.get() < 0 || disconnectedCounter.get() > addresses.length){
@@ -318,7 +281,7 @@ public class Main {
                 String timeStamp = getTimestamp(timeOfDisconnection);
                 clearLine();
                 String message = "[%s] Lost connection\n".formatted(timeStamp);
-                log(message);
+                logInternet(message);
 
                 if (disconnect_ping_count > 0) playAudio("disconnect_ping.wav", disconnect_ping_count);
                 connected = false;
@@ -335,7 +298,7 @@ public class Main {
                 // log the reconnection
                 clearLine();
                 String message = "[%s] Found connection after %s\n".formatted(timestamp,timeDiff);
-                log(message);
+                logInternet(message);
 
                 if(connect_ping_count > 0) playAudio("connect_ping.wav",connect_ping_count);
                 connected = true;
@@ -365,6 +328,140 @@ public class Main {
         return stateChanged;
     }
 
+    private static void readConfig() throws IOException {
+
+        config = new HashMap<>();
+
+        try (BufferedReader configFile = new BufferedReader(new FileReader(getFolderPath()+"config.txt"))) {
+            String line;
+            while ((line = configFile.readLine()) != null){
+                if(line.contains(":") && line.charAt(0) != '#'){
+                    //break the lines into key & value
+                    String key = line.substring(0,line.indexOf(":")).strip().toLowerCase();
+                    String value = line.substring((line.indexOf(":")+1)).strip().toLowerCase();
+                    config.put(key,value);
+                }
+            }
+        } catch (FileNotFoundException e){
+            //if a config doesn't exist, generate one and then read it
+            try(BufferedWriter writer = getWriter("config.txt")){
+                writer.write(DEFAULT_CONFIG_FILE);
+            };
+            readConfig();
+        }
+        initGlobalVariables();
+    }
+
+    private static void animateMonitoring() {
+        StringBuilder msg = new StringBuilder("\rMonitoring [ " + symbol + " ]");
+        for (int i = 0; i< addresses.length;i++){
+            msg.append(" - ").append(addresses[i]).append(" [ %s ]".formatted(addressStatus[i] ? "OK" : "XX"));
+        }
+        System.out.print(msg);
+        lastMsg = msg.toString();
+        symbol = getNextSymbol(symbol);
+    }
+
+    private static void initGlobalVariables() {
+        timeout = Integer.parseInt(config.getOrDefault("timeout", DEFAULT_TIMEOUT));
+        disconnect_ping_count = Integer.parseInt(config.getOrDefault("disconnect_ping_count", DEFAULT_DISCONNECT_PING_COUNT));
+        connect_ping_count = Integer.parseInt(config.getOrDefault("connect_ping_count", DEFAULT_CONNECT_PING_COUNT));
+        master_gain = Float.parseFloat(config.getOrDefault("master_gain", DEFAULT_MASTER_GAIN));
+        enable_debug_log = Boolean.parseBoolean(config.getOrDefault("enable_debug_log",DEFAULT_ENABLE_DEBUG_LOG));
+        test_interval = Integer.parseInt(config.getOrDefault("test_interval",DEFAULT_TEST_INTERVAL));
+    }
+
+    private static void initWorkerThreads() {
+        for(int i = 0; i < addresses.length; i++){
+            // create the ping command as a list of strings
+            List<String> commands = new ArrayList<String>();
+            commands.add("ping");
+            commands.add(addresses[i]);
+            commands.add("-w");
+            commands.add((timeout)+"");
+            commands.add("-n");
+            commands.add("1");
+            int threadIndex = i;
+            workerThreads[i] = new Thread(() -> workerThreadMainLoop(commands, threadIndex));
+        }
+    }
+
+    private static void checkForExceptionInWorkerThreads() {
+        for(int i = 0; i < addresses.length ; i++){
+            if(workerThreadExceptions[i] != null) {
+                throw new RuntimeException("Exception in worker threads");
+            }
+        }
+    }
+
+    private static void stopWorkerThreads() {
+        running = false;
+        for(Thread t:workerThreads) {
+            try {
+                t.join();
+            } catch (InterruptedException ignored) {}
+        }
+    }
+
+    //========================================================================== |
+    //====================== LOGS RELATED FUNCTIONS ============================ |
+    //========================================================================== |
+
+    private static void logInternet(String message) throws IOException {
+        System.out.print(message);
+        try (BufferedWriter writer = getLogWriter("internet_log")) {
+            writer.write(message);
+        }
+    }
+    private static void logDebug(String message) throws IOException {
+        // this is synchronized because multiple threads can write to the debug log
+        synchronized (debugLogLock){
+            try (BufferedWriter writer = getLogWriter("debug_log")) {
+                writer.write(message);
+            }
+        }
+    }
+
+    private static void logError(String message) throws IOException {
+        // this is synchronized because multiple threads can write to the error log
+        synchronized (errorLogLock){
+            try (BufferedWriter writer = getLogWriter("error_log")) {
+                writer.write(message);
+            }
+        }
+    }
+
+    private static BufferedWriter getLogWriter(String fileName) throws IOException {
+        String stamp = getAddressesStamp().replace("\"", "").replace(",", " - ");
+        return getWriter(fileName + " - " + stamp + ".txt");
+    }
+
+    private static BufferedWriter getWriter(String fileName) throws IOException {
+        String folderPath = getFolderPath();
+        return new BufferedWriter(new FileWriter(folderPath+fileName, true));
+    }
+
+
+    //========================================================================== |
+    //======================== UTILITY FUNCTIONS =============================== |
+    //========================================================================== |
+    private static void addToDisconnectedCounter(int num) {
+        int expectedValue;
+        int newValue;
+        do {
+            expectedValue = disconnectedCounter.get();
+            newValue = expectedValue+num;
+        } while(! disconnectedCounter.compareAndSet(expectedValue,newValue));
+    }
+
+    private static String getAddressesStamp() {
+        StringBuilder builder = new StringBuilder();
+        for (String address : addresses) {
+            builder.append("\"").append(address).append("\"").append(",");
+        }
+        builder.deleteCharAt(builder.length()-1);
+        return builder.toString();
+    }
     private static String getTimeDiff(LocalDateTime from,LocalDateTime to) {
         Duration diff = Duration.between(from, to);
         long hours = diff.toHours();
@@ -389,64 +486,6 @@ public class Main {
         }
 
         return output.toString();
-    }
-
-    private static void clearLine() {
-        System.out.print(lastMsg.replaceAll("."," "));
-        System.out.print('\r');
-    }
-
-    private static BufferedWriter getLogWriter() throws IOException {
-        String stamp = getAddressesStamp().replace("\"","").replace(","," - ");
-        return getWriter("internet log - " + stamp + ".txt");
-    }
-
-    private static BufferedWriter getWriter(String fileName) throws IOException {
-        String folderPath = getFolderPath();
-        return new BufferedWriter(new FileWriter(folderPath+fileName, true));
-    }
-
-    private static String getFolderPath() {
-        String folderPath = Main.class.getResource("Main.class").getPath();
-        folderPath = folderPath.replace("%20"," "); //fix space character
-        folderPath = folderPath.substring(folderPath.indexOf("/")+1); // remove initial '/'
-        folderPath = folderPath.substring(0,folderPath.lastIndexOf("/")); // remove .class file from path
-        folderPath = folderPath.substring(0,folderPath.lastIndexOf("/")+1); // exit jar
-        folderPath = folderPath.replace("/","\\");
-        return folderPath;
-    }
-
-    private static String getTimestamp(LocalDateTime time) {
-        return fixNumber(time.getDayOfMonth()) + "/" + fixNumber(time.getMonthValue()) + "/" + fixNumber(time.getYear()) + " "
-                + fixNumber(time.getHour()) + ":" + fixNumber(time.getMinute()) + ":" + fixNumber(time.getSecond());
-    }
-
-    private static boolean doCommand(List<String> command)
-            throws IOException
-    {
-        String s;
-        ProcessBuilder pb = new ProcessBuilder(command);
-        LocalDateTime now = LocalDateTime.now();
-        Process process = pb.start();
-        BufferedReader stdInput = new BufferedReader(new InputStreamReader(process.getInputStream()));
-
-        if(enable_debug_log){
-            synchronized (debugLogLock){
-
-                logDebug("["+getTimestamp(now)+"]");
-                while ((s = stdInput.readLine()) != null) {
-                    logDebug(s+"\n");
-                    if (notConnected(s)) return false;
-                }
-                logDebug("\n");
-            }
-        } else {
-            while ((s = stdInput.readLine()) != null) {
-                if (notConnected(s)) return false;
-            }
-        }
-
-        return true;
     }
 
     private static boolean notConnected(String s) {
@@ -474,14 +513,24 @@ public class Main {
         };
     }
 
-    private static void animateMonitoring() {
-        String msg = "\rMonitoring [ "+ symbol+" ]";
-        for (int i = 0; i< addresses.length;i++){
-            msg += " - "+addresses[i]+" [ %s ]".formatted(addressStatus[i] ? "OK" : "XX");
-        }
-        System.out.print(msg);
-        lastMsg = msg;
-        symbol = getNextSymbol(symbol);
+    private static void clearLine() {
+        System.out.print(lastMsg.replaceAll("."," "));
+        System.out.print('\r');
+    }
+
+    private static String getFolderPath() {
+        String folderPath = Main.class.getResource("Main.class").getPath();
+        folderPath = folderPath.replace("%20"," "); //fix space character
+        folderPath = folderPath.substring(folderPath.indexOf("/")+1); // remove initial '/'
+        folderPath = folderPath.substring(0,folderPath.lastIndexOf("/")); // remove .class file from path
+        folderPath = folderPath.substring(0,folderPath.lastIndexOf("/")+1); // exit jar
+        folderPath = folderPath.replace("/","\\");
+        return folderPath;
+    }
+
+    private static String getTimestamp(LocalDateTime time) {
+        return fixDualDigitNumber(time.getDayOfMonth()) + "/" + fixDualDigitNumber(time.getMonthValue()) + "/" + fixDualDigitNumber(time.getYear()) + " "
+                + fixDualDigitNumber(time.getHour()) + ":" + fixDualDigitNumber(time.getMinute()) + ":" + fixDualDigitNumber(time.getSecond());
     }
 
     private static void playAudio(String fileName,int count){
@@ -500,7 +549,8 @@ public class Main {
         clip.loop(count-1);
     }
 
-    private static String fixNumber(int num){
+    private static String fixDualDigitNumber(int num){
         return num < 10 ? "0"+num : ""+num;
     }
+
 }
