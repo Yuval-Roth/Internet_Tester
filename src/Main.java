@@ -89,6 +89,7 @@ public class Main {
     private static AtomicBoolean connected;
     private static String lastMsg;
     private static LocalDateTime timeOfDisconnection;
+    private static LocalDateTime mainThreadTimeOfDisconnection;
     // < GENERAL APPLICATION DATA />
 
     public static void main(String[] args)  {
@@ -281,11 +282,19 @@ public class Main {
         if (disconnectedCounter.get() == addresses.length) {
             if (connected.get()) {
 
-//                System.out.println("main thread - connected = false at "+System.currentTimeMillis());
+                // edge case but prevents race conditions and null pointer exceptions
+                synchronized (timeOfDisconnectionLock){
+                    if(timeOfDisconnection == null){
+                        return stateChanged;
+                    } else {
+                        mainThreadTimeOfDisconnection = timeOfDisconnection;
+                    }
+                }
+
                 connected.set(false);
 
                 // log the disconnection
-                String timeStamp = getTimestamp(timeOfDisconnection);
+                String timeStamp = getTimestamp(mainThreadTimeOfDisconnection);
                 clearLine();
                 String message = "[%s] Lost connection\n".formatted(timeStamp);
                 logInternet(message);
@@ -299,13 +308,11 @@ public class Main {
                 // get time of reconnection
                 LocalDateTime now = LocalDateTime.now();
                 String timestamp = getTimestamp(now);
-
-//                System.out.println("main thread getting timeDiff at "+System.currentTimeMillis());
-                String timeDiff = getTimeDiff(timeOfDisconnection,now);
+                String timeDiff = getTimeDiff(mainThreadTimeOfDisconnection,now);
 
                 // log the reconnection
                 clearLine();
-                String message = "[%s] Found connection %s\n".formatted(timestamp,timeDiff);
+                String message = "[%s] Found connection after %s\n".formatted(timestamp,timeDiff);
                 logInternet(message);
 
                 if(connect_ping_count > 0) playAudio("connect_ping.wav",connect_ping_count);
