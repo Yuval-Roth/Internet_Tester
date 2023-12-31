@@ -218,7 +218,7 @@ public class Main {
                     synchronized (timeOfDisconnectionLock){
                         if(connected.get()){
                             if(timeOfDisconnection == now) { // prevent unexpected interactions with other threads
-                                System.out.println("worker thread resetting timeOfDisconnection at "+System.currentTimeMillis());
+//                                System.out.println("worker thread resetting timeOfDisconnection at "+System.currentTimeMillis());
                                 timeOfDisconnection = null;
                             }
                         }
