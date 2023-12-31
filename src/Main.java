@@ -3,12 +3,14 @@ import javax.sound.sampled.*;
 import java.io.*;
 import java.time.*;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class Main {
 
     // < CONSTANTS >
     private static final long SLEEP_TIME_BETWEEN_CONNECTION_CHECKS = 100;
+    private static final int SLEEP_TIME_WAITING_FOR_CONNECTION_TO_RETURN = 150;
     private static final long ONE_MINUTE = 1000 * 60;
     private static final long SLEEP_TIME_BETWEEN_ANIMATION_UPDATES = 250;
     // < CONSTANTS />
@@ -84,10 +86,10 @@ public class Main {
     private static char symbol = '|';
     private static Clip clip;
     private static AtomicInteger disconnectedCounter;
-    private static boolean connected;
+    private static AtomicBoolean connected;
     private static String lastMsg;
     private static LocalDateTime timeOfDisconnection;
-    // < GENERAL APPLICATION DATA >
+    // < GENERAL APPLICATION DATA />
 
     public static void main(String[] args)  {
 
@@ -111,7 +113,7 @@ public class Main {
                 Arrays.fill(addressStatus,true);
                 clip = AudioSystem.getClip();
                 disconnectedCounter = new AtomicInteger(0);
-                connected = true;
+                connected = new AtomicBoolean(true);
                 lastMsg = "";
                 timeOfDisconnectionLock = new Object();
                 debugLogLock = new Object();
@@ -192,6 +194,7 @@ public class Main {
 
                     synchronized (timeOfDisconnectionLock){
                         if(timeOfDisconnection == null || timeOfDisconnection.isAfter(now)){
+//                            System.out.println("worker thread setting timeOfDisconnection at "+System.currentTimeMillis());
                             timeOfDisconnection = now;
                         }
                     }
@@ -204,7 +207,7 @@ public class Main {
                     waitingCommands.set(3,"500"); // set the timeout to 500ms
                     while(running && !doPing(waitingCommands)){
                         try{
-                            Thread.sleep(SLEEP_TIME_BETWEEN_CONNECTION_CHECKS);
+                            Thread.sleep(SLEEP_TIME_WAITING_FOR_CONNECTION_TO_RETURN);
                         } catch (InterruptedException ignored) {}
                     }
 
@@ -213,8 +216,9 @@ public class Main {
 
                     // reset the time of disconnection if only this thread got disconnected
                     synchronized (timeOfDisconnectionLock){
-                        if(connected){
+                        if(connected.get()){
                             if(timeOfDisconnection == now) { // prevent unexpected interactions with other threads
+                                System.out.println("worker thread resetting timeOfDisconnection at "+System.currentTimeMillis());
                                 timeOfDisconnection = null;
                             }
                         }
@@ -275,7 +279,10 @@ public class Main {
         boolean stateChanged = false;
 
         if (disconnectedCounter.get() == addresses.length) {
-            if (connected) {
+            if (connected.get()) {
+
+//                System.out.println("main thread - connected = false at "+System.currentTimeMillis());
+                connected.set(false);
 
                 // log the disconnection
                 String timeStamp = getTimestamp(timeOfDisconnection);
@@ -284,24 +291,25 @@ public class Main {
                 logInternet(message);
 
                 if (disconnect_ping_count > 0) playAudio("disconnect_ping.wav", disconnect_ping_count);
-                connected = false;
                 stateChanged = true; // signal that connection status changed
             }
         } else {
-            if(! connected){
+            if(! connected.get()){
 
                 // get time of reconnection
                 LocalDateTime now = LocalDateTime.now();
                 String timestamp = getTimestamp(now);
+
+//                System.out.println("main thread getting timeDiff at "+System.currentTimeMillis());
                 String timeDiff = getTimeDiff(timeOfDisconnection,now);
 
                 // log the reconnection
                 clearLine();
-                String message = "[%s] Found connection after %s\n".formatted(timestamp,timeDiff);
+                String message = "[%s] Found connection %s\n".formatted(timestamp,timeDiff);
                 logInternet(message);
 
                 if(connect_ping_count > 0) playAudio("connect_ping.wav",connect_ping_count);
-                connected = true;
+                connected.set(true);
                 synchronized (timeOfDisconnectionLock){
                     timeOfDisconnection = null;
                 }
@@ -317,7 +325,7 @@ public class Main {
         // So we reset the time of disconnection.
         synchronized (timeOfDisconnectionLock){
             if(timeOfDisconnection != null){
-                if(connected) {
+                if(connected.get()) {
                     if(timeOfDisconnection.isBefore(LocalDateTime.now().minusSeconds((long)Math.ceil(timeout/1000.0) + 2))){
                         timeOfDisconnection = null;
                     }
