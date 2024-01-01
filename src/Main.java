@@ -3,6 +3,7 @@ import javax.sound.sampled.*;
 import java.io.*;
 import java.time.*;
 import java.util.*;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -22,6 +23,7 @@ public class Main {
     public static final String DEFAULT_MASTER_GAIN = "-24.0";
     public static final String DEFAULT_ENABLE_DEBUG_LOG = "false";
     public static final String DEFAULT_TEST_INTERVAL = "1000";
+    public static final String DEFAULT_LONG_RESPONSE_THRESHOLD = "1000";
     public static final String DEFAULT_CONFIG_FILE = """
             # READ ME:
             # Editing this config will take up to 60 seconds to take effect
@@ -44,18 +46,23 @@ public class Main {
             master_gain: %s
             
             # Enable debug logging or not
-            # The debug log can get really big really fast
+            # Warning: The debug log can get big after a long time
             enable_debug_log: %s
             
             # Time between connection tests in milliseconds
             test_interval: %s
+            
+            # The threshold in milliseconds to alert of an unusually long response time
+            # Setting this value to 0 will disable the alert
+            long_response_threshold: %s
             """.formatted(
             DEFAULT_TIMEOUT,
             DEFAULT_DISCONNECT_PING_COUNT,
             DEFAULT_CONNECT_PING_COUNT,
             DEFAULT_MASTER_GAIN,
             DEFAULT_ENABLE_DEBUG_LOG,
-            DEFAULT_TEST_INTERVAL);
+            DEFAULT_TEST_INTERVAL,
+            DEFAULT_LONG_RESPONSE_THRESHOLD);
     // < DEFAULTS />
 
     // < GLOBAL VARIABLES >
@@ -66,6 +73,7 @@ public class Main {
     private static float master_gain;
     private static boolean enable_debug_log;
     private static int test_interval;
+    private static int long_response_threshold;
     // < GLOBAL VARIABLES />
 
     // < THREADS RELATED >
@@ -79,6 +87,8 @@ public class Main {
     private static Object timeOfDisconnectionLock;
     private static Object debugLogLock;
     private static Object errorLogLock;
+    private static Object internetLogLock;
+    private static Semaphore printQueueLock;
     // < LOCKS />
 
     // < GENERAL APPLICATION DATA >
@@ -90,6 +100,7 @@ public class Main {
     private static String lastMsg;
     private static LocalDateTime timeOfDisconnection;
     private static LocalDateTime mainThreadTimeOfDisconnection;
+    private static List<String> printQueue;
     // < GENERAL APPLICATION DATA />
 
     public static void main(String[] args)  {
@@ -119,6 +130,9 @@ public class Main {
                 timeOfDisconnectionLock = new Object();
                 debugLogLock = new Object();
                 errorLogLock = new Object();
+                internetLogLock = new Object();
+                printQueue = new LinkedList<>();
+                printQueueLock = new Semaphore(1,true);
                 // ==================================
 
                 readConfig();
@@ -191,7 +205,7 @@ public class Main {
         while(running){
             try{
                 LocalDateTime now = LocalDateTime.now();
-                if (!doPing(commands)){
+                if (!doPing(commands, threadIndex)){
 
                     synchronized (timeOfDisconnectionLock){
                         if(timeOfDisconnection == null || timeOfDisconnection.isAfter(now)){
@@ -205,7 +219,7 @@ public class Main {
                     // wait for connection to return
                     List<String> waitingCommands = new ArrayList<>(commands);
                     waitingCommands.set(3,"500"); // set the timeout to 500ms
-                    while(running && !doPing(waitingCommands)){
+                    while(running && !doPing(waitingCommands, threadIndex)){
                         try{
                             Thread.sleep(SLEEP_TIME_WAITING_FOR_CONNECTION_TO_RETURN);
                         } catch (InterruptedException ignored) {}
@@ -223,7 +237,6 @@ public class Main {
                         }
                     }
                 }
-
                 if(running){
                     try {
                         Thread.sleep(test_interval);
@@ -242,19 +255,23 @@ public class Main {
     }
 
 
+
     //========================================================================== |
     //====================== PROGRAM FLOW FUNCTIONS ============================ |
     //========================================================================== |
-
-    private static boolean doPing(List<String> command)
+    private static boolean doPing(List<String> command, int threadIndex)
             throws IOException
     {
         ProcessBuilder pb = new ProcessBuilder(command);
         LocalDateTime now = LocalDateTime.now();
+
+        // run the process and count the time
+        long startMillis = System.currentTimeMillis();
         Process process = pb.start();
-        BufferedReader stdInput = new BufferedReader(new InputStreamReader(process.getInputStream()));
+        long endMillis = System.currentTimeMillis();
 
         // get output
+        BufferedReader stdInput = new BufferedReader(new InputStreamReader(process.getInputStream()));
         String s;
         StringBuilder output = new StringBuilder();
         while ((s = stdInput.readLine()) != null) {
@@ -262,12 +279,25 @@ public class Main {
         }
         output.deleteCharAt(output.length()-1); // remove the last '\n'
 
+        // alert if response time passed the threshold
+        long diff = endMillis - startMillis;
+        if(long_response_threshold > 0
+                && connected.get()
+                && ! notConnected(output.toString())
+                && diff >= long_response_threshold){
+            String timeStamp = getTimestamp(now);
+            String message = "[%s] %s took %s ms to respond".formatted(timeStamp, addresses[threadIndex], diff);
+            logInternet(message);
+        }
+
         if (enable_debug_log){
             String debugMsg = "[%s]%s\n\n".formatted(getTimestamp(now),output.toString());
             logDebug(debugMsg);
         }
+
         return !notConnected(output.toString());
     }
+
     private static boolean checkConnectionStatus() throws IOException {
 
         // catch illegal value of counter and multi-threading issues
@@ -293,7 +323,6 @@ public class Main {
 
                 // log the disconnection
                 String timeStamp = getTimestamp(mainThreadTimeOfDisconnection);
-                clearLine();
                 String message = "[%s] Lost connection\n".formatted(timeStamp);
                 logInternet(message);
 
@@ -309,7 +338,6 @@ public class Main {
                 String timeDiff = getTimeDiff(mainThreadTimeOfDisconnection,now);
 
                 // log the reconnection
-                clearLine();
                 String message = "[%s] Found connection after %s\n".formatted(timestamp,timeDiff);
                 logInternet(message);
 
@@ -340,7 +368,6 @@ public class Main {
 
         return stateChanged;
     }
-
     private static void readConfig() throws IOException {
 
         config = new HashMap<>();
@@ -366,6 +393,7 @@ public class Main {
     }
 
     private static void animateMonitoring() {
+        checkPrintQueue();
         StringBuilder msg = new StringBuilder("\rMonitoring [ " + symbol + " ]");
         for (int i = 0; i< addresses.length;i++){
             msg.append(" - ").append(addresses[i]).append(" [ %s ]".formatted(addressStatus[i] ? "OK" : "XX"));
@@ -375,6 +403,23 @@ public class Main {
         symbol = getNextSymbol(symbol);
     }
 
+    private static void checkPrintQueue() {
+        if(! printQueue.isEmpty()){
+            try {
+                printQueueLock.acquire();
+            } catch (InterruptedException ignored) {}
+            StringBuilder toPrint = new StringBuilder();
+            while(! printQueue.isEmpty()){
+                toPrint.append(printQueue.get(0));
+                printQueue.remove(0);
+                if(! printQueue.isEmpty()) toPrint.append("\n");
+            }
+            printQueueLock.release();
+            clearLine();
+            System.out.print(toPrint);
+        }
+    }
+
     private static void initGlobalVariables() {
         timeout = Integer.parseInt(config.getOrDefault("timeout", DEFAULT_TIMEOUT));
         disconnect_ping_count = Integer.parseInt(config.getOrDefault("disconnect_ping_count", DEFAULT_DISCONNECT_PING_COUNT));
@@ -382,6 +427,7 @@ public class Main {
         master_gain = Float.parseFloat(config.getOrDefault("master_gain", DEFAULT_MASTER_GAIN));
         enable_debug_log = Boolean.parseBoolean(config.getOrDefault("enable_debug_log",DEFAULT_ENABLE_DEBUG_LOG));
         test_interval = Integer.parseInt(config.getOrDefault("test_interval",DEFAULT_TEST_INTERVAL));
+        long_response_threshold = Integer.parseInt(config.getOrDefault("long_response_threshold",DEFAULT_LONG_RESPONSE_THRESHOLD));
     }
 
     private static void initWorkerThreads() {
@@ -420,13 +466,15 @@ public class Main {
     //========================================================================== |
     //====================== LOGS RELATED FUNCTIONS ============================ |
     //========================================================================== |
+
     private static void logInternet(String message) throws IOException {
-        System.out.print(message);
-        try (BufferedWriter writer = getLogWriter("internet_log")) {
-            writer.write(message);
+        synchronized (internetLogLock){
+            print(message);
+            try (BufferedWriter writer = getLogWriter("internet_log")) {
+                writer.write(message);
+            }
         }
     }
-
     private static void logDebug(String message) throws IOException {
         // this is synchronized because multiple threads can write to the debug log
         synchronized (debugLogLock){
@@ -435,6 +483,7 @@ public class Main {
             }
         }
     }
+
     private static void logError(String message) throws IOException {
         // this is synchronized because multiple threads can write to the error log
         synchronized (errorLogLock){
@@ -443,7 +492,6 @@ public class Main {
             }
         }
     }
-
     private static BufferedWriter getLogWriter(String fileName) throws IOException {
         String stamp = getAddressesStamp().replace("\"", "").replace(",", " - ");
         return getWriter(fileName + " - " + stamp + ".txt");
@@ -455,10 +503,10 @@ public class Main {
     }
 
 
+
     //========================================================================== |
     //======================== UTILITY FUNCTIONS =============================== |
     //========================================================================== |
-
     private static void addToDisconnectedCounter(int num) {
         int expectedValue;
         int newValue;
@@ -467,6 +515,7 @@ public class Main {
             newValue = expectedValue+num;
         } while(! disconnectedCounter.compareAndSet(expectedValue,newValue));
     }
+
     private static String getAddressesStamp() {
         StringBuilder builder = new StringBuilder();
         for (String address : addresses) {
@@ -475,7 +524,6 @@ public class Main {
         builder.deleteCharAt(builder.length()-1);
         return builder.toString();
     }
-
     private static String getTimeDiff(LocalDateTime from,LocalDateTime to) {
         Duration diff = Duration.between(from, to);
         long hours = diff.toHours();
@@ -501,6 +549,7 @@ public class Main {
 
         return output.toString();
     }
+
     private static boolean notConnected(String s) {
         s = s.toLowerCase();
         String[] keyWords = {
@@ -515,7 +564,6 @@ public class Main {
         }
         return false;
     }
-
     private static char getNextSymbol(char c){
         return switch(c){
             case '|' -> '/';
@@ -575,4 +623,11 @@ public class Main {
         return output.toString();
     }
 
+    private static void print(String message) {
+        try {
+            printQueueLock.acquire();
+        } catch (InterruptedException ignored) {}
+        printQueue.add(message);
+        printQueueLock.release();
+    }
 }
