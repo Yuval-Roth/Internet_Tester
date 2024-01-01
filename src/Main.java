@@ -323,7 +323,7 @@ public class Main {
 
                 // log the disconnection
                 String timeStamp = getTimestamp(mainThreadTimeOfDisconnection);
-                String message = "[%s] Lost connection\n".formatted(timeStamp);
+                String message = "[%s] Lost connection".formatted(timeStamp);
                 logInternet(message);
 
                 if (disconnect_ping_count > 0) playAudio("disconnect_ping.wav", disconnect_ping_count);
@@ -338,7 +338,7 @@ public class Main {
                 String timeDiff = getTimeDiff(mainThreadTimeOfDisconnection,now);
 
                 // log the reconnection
-                String message = "[%s] Found connection after %s\n".formatted(timestamp,timeDiff);
+                String message = "[%s] Found connection after %s".formatted(timestamp,timeDiff);
                 logInternet(message);
 
                 if(connect_ping_count > 0) playAudio("connect_ping.wav",connect_ping_count);
@@ -410,9 +410,8 @@ public class Main {
             } catch (InterruptedException ignored) {}
             StringBuilder toPrint = new StringBuilder();
             while(! printQueue.isEmpty()){
-                toPrint.append(printQueue.get(0));
+                toPrint.append(printQueue.get(0)).append("\n");
                 printQueue.remove(0);
-                if(! printQueue.isEmpty()) toPrint.append("\n");
             }
             printQueueLock.release();
             clearLine();
