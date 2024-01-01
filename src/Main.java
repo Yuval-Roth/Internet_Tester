@@ -72,7 +72,7 @@ public class Main {
     private static Thread[] workerThreads;
     private static Exception[] workerThreadExceptions;
     private static boolean[] addressStatus;
-    private static boolean running;
+    private volatile static boolean running;
     // < THREADS RELATED />
 
     // < LOCKS >
@@ -137,21 +137,21 @@ public class Main {
             } catch (Exception e){
                 String timestamp = getTimestamp(LocalDateTime.now());
                 stopWorkerThreads();
-                String message = timestamp+": "+ e +"\n";
+                String errorMessage = "[%s]\n%s\n".formatted(timestamp,stackTraceToString(e));
                 try {
-                    logError(message);
+                    logError(errorMessage);
                 } catch (IOException ignored) {}
-                e.printStackTrace();
-                System.out.println("\n"+message);
+                System.out.println();
+                System.out.println("\n"+errorMessage);
                 System.out.println("Restarting...\n\n\n\n");
             }
         }
     }
 
+
     //========================================================================== |
     //============================ MAIN LOOPS ================================== |
     //========================================================================== |
-
     private static void mainLoop() throws IOException {
         long nextConnectionCheckTime = System.currentTimeMillis();
         long nextAnimationTime = System.currentTimeMillis();
@@ -195,7 +195,6 @@ public class Main {
 
                     synchronized (timeOfDisconnectionLock){
                         if(timeOfDisconnection == null || timeOfDisconnection.isAfter(now)){
-//                            System.out.println("worker thread setting timeOfDisconnection at "+System.currentTimeMillis());
                             timeOfDisconnection = now;
                         }
                     }
@@ -219,7 +218,6 @@ public class Main {
                     synchronized (timeOfDisconnectionLock){
                         if(connected.get()){
                             if(timeOfDisconnection == now) { // prevent unexpected interactions with other threads
-//                                System.out.println("worker thread resetting timeOfDisconnection at "+System.currentTimeMillis());
                                 timeOfDisconnection = null;
                             }
                         }
@@ -247,6 +245,7 @@ public class Main {
     //========================================================================== |
     //====================== PROGRAM FLOW FUNCTIONS ============================ |
     //========================================================================== |
+
     private static boolean doPing(List<String> command)
             throws IOException
     {
@@ -269,7 +268,6 @@ public class Main {
         }
         return !notConnected(output.toString());
     }
-
     private static boolean checkConnectionStatus() throws IOException {
 
         // catch illegal value of counter and multi-threading issues
@@ -418,16 +416,17 @@ public class Main {
         }
     }
 
+
     //========================================================================== |
     //====================== LOGS RELATED FUNCTIONS ============================ |
     //========================================================================== |
-
     private static void logInternet(String message) throws IOException {
         System.out.print(message);
         try (BufferedWriter writer = getLogWriter("internet_log")) {
             writer.write(message);
         }
     }
+
     private static void logDebug(String message) throws IOException {
         // this is synchronized because multiple threads can write to the debug log
         synchronized (debugLogLock){
@@ -436,7 +435,6 @@ public class Main {
             }
         }
     }
-
     private static void logError(String message) throws IOException {
         // this is synchronized because multiple threads can write to the error log
         synchronized (errorLogLock){
@@ -460,6 +458,7 @@ public class Main {
     //========================================================================== |
     //======================== UTILITY FUNCTIONS =============================== |
     //========================================================================== |
+
     private static void addToDisconnectedCounter(int num) {
         int expectedValue;
         int newValue;
@@ -468,7 +467,6 @@ public class Main {
             newValue = expectedValue+num;
         } while(! disconnectedCounter.compareAndSet(expectedValue,newValue));
     }
-
     private static String getAddressesStamp() {
         StringBuilder builder = new StringBuilder();
         for (String address : addresses) {
@@ -477,6 +475,7 @@ public class Main {
         builder.deleteCharAt(builder.length()-1);
         return builder.toString();
     }
+
     private static String getTimeDiff(LocalDateTime from,LocalDateTime to) {
         Duration diff = Duration.between(from, to);
         long hours = diff.toHours();
@@ -502,7 +501,6 @@ public class Main {
 
         return output.toString();
     }
-
     private static boolean notConnected(String s) {
         s = s.toLowerCase();
         String[] keyWords = {
@@ -566,6 +564,15 @@ public class Main {
 
     private static String fixDualDigitNumber(int num){
         return num < 10 ? "0"+num : ""+num;
+    }
+
+    private static String stackTraceToString(Exception e) {
+        StringBuilder output  = new StringBuilder();
+        output.append(e).append("\n");
+        for (var element: e.getStackTrace()) {
+            output.append("\t").append(element).append("\n");
+        }
+        return output.toString();
     }
 
 }
