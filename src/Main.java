@@ -140,7 +140,7 @@ public class Main {
 
                 // print start message
                 String timestamp = getTimestamp(LocalDateTime.now());
-                String message = "\n[%s] Started logging connection to %s with timeout of %s\n".formatted(timestamp, getAddressesStamp() ,timeout);
+                String message = "\n[%s] Started logging connection to %s with timeout of %s".formatted(timestamp, getAddressesStamp() ,timeout);
                 logInternet(message);
 
                 // start
@@ -151,7 +151,7 @@ public class Main {
             } catch (Exception e){
                 String timestamp = getTimestamp(LocalDateTime.now());
                 stopWorkerThreads();
-                String errorMessage = "[%s]\n%s\n".formatted(timestamp,stackTraceToString(e));
+                String errorMessage = "[%s]\n%s".formatted(timestamp,stackTraceToString(e));
                 try {
                     logError(errorMessage);
                 } catch (IOException ignored) {}
@@ -245,7 +245,7 @@ public class Main {
             } catch (Exception e){
                 LocalDateTime now = LocalDateTime.now();
                 try {
-                    logError("[%s]\n%s\n".formatted(getTimestamp(now),e.toString()));
+                    logError("[%s]\n%s".formatted(getTimestamp(now),e.toString()));
                 } catch (IOException ignored) {}
                 // Tell the main thread of the exception
                 workerThreadExceptions[threadIndex] = e;
@@ -291,7 +291,7 @@ public class Main {
         }
 
         if (enable_debug_log){
-            String debugMsg = "[%s]%s\n\n".formatted(getTimestamp(now),output.toString());
+            String debugMsg = "[%s]%s\n".formatted(getTimestamp(now),output.toString());
             logDebug(debugMsg);
         }
 
@@ -470,7 +470,7 @@ public class Main {
         synchronized (internetLogLock){
             print(message);
             try (BufferedWriter writer = getLogWriter("internet_log")) {
-                writer.write(message);
+                writer.write(message+"\n");
             }
         }
     }
@@ -478,7 +478,7 @@ public class Main {
         // this is synchronized because multiple threads can write to the debug log
         synchronized (debugLogLock){
             try (BufferedWriter writer = getLogWriter("debug_log")) {
-                writer.write(message);
+                writer.write(message+"\n");
             }
         }
     }
@@ -487,7 +487,7 @@ public class Main {
         // this is synchronized because multiple threads can write to the error log
         synchronized (errorLogLock){
             try (BufferedWriter writer = getLogWriter("error_log")) {
-                writer.write(message);
+                writer.write(message+"\n");
             }
         }
     }
