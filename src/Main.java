@@ -7,6 +7,7 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+@SuppressWarnings({"SynchronizeOnNonFinalField", "BooleanMethodIsAlwaysInverted", "BusyWait"})
 public class Main {
 
     // < CONSTANTS >
@@ -98,6 +99,7 @@ public class Main {
     private static boolean firstConfigRead;
     // < GENERAL APPLICATION DATA />
 
+    @SuppressWarnings("InfiniteLoopStatement")
     public static void main(String[] args)  {
 
         // argument check
@@ -163,6 +165,7 @@ public class Main {
     //========================================================================== |
     //============================ MAIN LOOPS ================================== |
     //========================================================================== |
+    @SuppressWarnings("InfiniteLoopStatement")
     private static void mainLoop() throws IOException {
         long nextConnectionCheckTime = System.currentTimeMillis();
         long nextAnimationTime = System.currentTimeMillis();
@@ -277,7 +280,7 @@ public class Main {
         // alert if response time passed the threshold
         if(long_response_threshold > 0
                 && connected.get()
-                && ! notConnected(output.toString())
+                && ! notConnected(output)
                 && delay >= long_response_threshold){
             String timeStamp = getTimestamp(now);
             String message = "[%s] %s took %s ms to respond".formatted(timeStamp, addresses[threadIndex], delay);
@@ -285,11 +288,11 @@ public class Main {
         }
 
         if (enable_debug_log){
-            String debugMsg = "[%s]%s\n".formatted(getTimestamp(now),output.toString());
+            String debugMsg = "[%s]%s\n".formatted(getTimestamp(now), output);
             logDebug(debugMsg);
         }
 
-        return !notConnected(output.toString());
+        return !notConnected(output);
     }
 
     private static boolean checkConnectionStatus() throws IOException {
@@ -404,8 +407,8 @@ public class Main {
             } catch (InterruptedException ignored) {}
             StringBuilder toPrint = new StringBuilder();
             while(! printQueue.isEmpty()){
-                toPrint.append(printQueue.get(0)).append("\n");
-                printQueue.remove(0);
+                toPrint.append(printQueue.getFirst()).append("\n");
+                printQueue.removeFirst();
             }
             printQueueLock.release();
             clearLine();
@@ -413,10 +416,11 @@ public class Main {
         }
     }
 
-    private static void initGlobalVariables() {
+    private static void initGlobalVariables() throws IOException {
         int newTimeout = Integer.parseInt(config.getOrDefault("timeout", DEFAULT_TIMEOUT));
         if(!firstConfigRead && newTimeout != timeout){
             updatePingEndPoints();
+            logInternet("Timeout changed to "+newTimeout+" milliseconds");
         }
         timeout = newTimeout;
         disconnect_ping_count = Integer.parseInt(config.getOrDefault("disconnect_ping_count", DEFAULT_DISCONNECT_PING_COUNT));
@@ -575,11 +579,13 @@ public class Main {
         };
     }
 
+    @SuppressWarnings("SuspiciousRegexArgument")
     private static void clearLine() {
         System.out.print(lastMsg.replaceAll("."," "));
         System.out.print('\r');
     }
 
+    @SuppressWarnings("DataFlowIssue")
     private static String getFolderPath() {
         String folderPath = Main.class.getResource("Main.class").getPath();
         folderPath = folderPath.replace("%20"," "); //fix space character
@@ -601,6 +607,7 @@ public class Main {
 
         try {
             InputStream in = Main.class.getResourceAsStream(fileName);
+            assert in != null;
             BufferedInputStream buffIn = new BufferedInputStream(in);
             clip.open(AudioSystem.getAudioInputStream(buffIn));
             FloatControl control = (FloatControl) clip.getControl(FloatControl.Type.MASTER_GAIN);
