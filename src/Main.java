@@ -259,9 +259,7 @@ public class Main {
     //========================================================================== |
     //====================== PROGRAM FLOW FUNCTIONS ============================ |
     //========================================================================== |
-    private static boolean doPing(List<String> command, int threadIndex)
-            throws IOException
-    {
+    private static boolean doPing(List<String> command, int threadIndex) throws IOException {
         ProcessBuilder pb = new ProcessBuilder(command);
         LocalDateTime now = LocalDateTime.now();
 
