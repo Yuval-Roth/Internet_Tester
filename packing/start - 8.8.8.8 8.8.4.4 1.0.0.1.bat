@@ -1,0 +1,1 @@
+start Internet-Tester.exe 8.8.8.8 8.8.4.4 1.0.0.1

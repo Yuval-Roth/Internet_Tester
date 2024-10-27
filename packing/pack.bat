@@ -1,0 +1,1 @@
+jpackage --name "Internet-Tester" --main-jar "internet-tester.jar" --input program/. --dest "C:\Users\Yuval\git\internet_test\out\artifacts"  --type app-image --win-console --app-version 1.0 --copyright "Yuval Roth" --vendor "Yuval Roth" --add-modules java.base,java.desktop
