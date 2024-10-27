@@ -538,6 +538,8 @@ public class Main {
     private static boolean notConnected(String s) {
         s = s.toLowerCase();
         String[] keyWords = {
+                "no resources",
+                "general failure",
                 "100% loss",
                 "could not find host",
                 "request timed out",
