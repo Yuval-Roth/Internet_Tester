@@ -10,8 +10,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class Main {
 
     // < CONSTANTS >
-    private static final long SLEEP_TIME_BETWEEN_CONNECTION_CHECKS = 100;
-    private static final int SLEEP_TIME_WAITING_FOR_CONNECTION_TO_RETURN = 150;
+    private static final long SLEEP_TIME_BETWEEN_CONNECTION_CHECKS = 250;
     private static final long ONE_MINUTE = 1000 * 60;
     private static final long SLEEP_TIME_BETWEEN_ANIMATION_UPDATES = 250;
     // < CONSTANTS />
@@ -22,7 +21,6 @@ public class Main {
     public static final String DEFAULT_CONNECT_PING_COUNT = "1";
     public static final String DEFAULT_MASTER_GAIN = "-24.0";
     public static final String DEFAULT_ENABLE_DEBUG_LOG = "false";
-    public static final String DEFAULT_TEST_INTERVAL = "1000";
     public static final String DEFAULT_LONG_RESPONSE_THRESHOLD = "1000";
     public static final String DEFAULT_CONFIG_FILE = """
             # READ ME:
@@ -49,9 +47,6 @@ public class Main {
             # Warning: The debug log can get big after a long time
             enable_debug_log: %s
             
-            # Time between connection tests in milliseconds
-            test_interval: %s
-            
             # The threshold in milliseconds to alert of an unusually long response time
             # Setting this value to 0 will disable the alert
             long_response_threshold: %s
@@ -61,7 +56,6 @@ public class Main {
             DEFAULT_CONNECT_PING_COUNT,
             DEFAULT_MASTER_GAIN,
             DEFAULT_ENABLE_DEBUG_LOG,
-            DEFAULT_TEST_INTERVAL,
             DEFAULT_LONG_RESPONSE_THRESHOLD);
     // < DEFAULTS />
 
@@ -72,7 +66,6 @@ public class Main {
     private static int connect_ping_count;
     private static float master_gain;
     private static boolean enable_debug_log;
-    private static int test_interval;
     private static int long_response_threshold;
     // < GLOBAL VARIABLES />
 
@@ -217,18 +210,24 @@ public class Main {
                         }
                     }
 
-                    addressStatus[threadIndex] = false;
-                    addToDisconnectedCounter(1);
+                    if(! checkPing(threadIndex)){
+                        addressStatus[threadIndex] = false;
+                        addToDisconnectedCounter(1);
 
-                    // wait for connection to return
-                    while(running && !checkPing(threadIndex)){
-                        try{
-                            Thread.sleep(SLEEP_TIME_WAITING_FOR_CONNECTION_TO_RETURN);
-                        } catch (InterruptedException ignored) {}
+                        // wait for connection to return
+                        while(running && !checkPing(threadIndex)){
+                            try{
+                                Thread.sleep(SLEEP_TIME_BETWEEN_CONNECTION_CHECKS);
+                            } catch (InterruptedException ignored) {}
+                        }
+
+                        addressStatus[threadIndex] = true;
+                        addToDisconnectedCounter(-1);
+                    } else {
+                        logInternet("[%s] %s %s".formatted(getTimestamp(now),
+                                addresses[threadIndex],
+                                pingEndPoints[threadIndex].getPreviousOutputLine()));
                     }
-
-                    addressStatus[threadIndex] = true;
-                    addToDisconnectedCounter(-1);
 
                     // reset the time of disconnection if only this thread got disconnected
                     synchronized (timeOfDisconnectionLock){
@@ -241,7 +240,7 @@ public class Main {
                 }
                 if(running){
                     try {
-                        Thread.sleep(test_interval);
+                        Thread.sleep(SLEEP_TIME_BETWEEN_CONNECTION_CHECKS);
                     } catch (InterruptedException ignored) {}
                 }
             } catch (Exception e){
@@ -266,7 +265,7 @@ public class Main {
         LocalDateTime now = LocalDateTime.now();
 
         // get output
-        String output = pingEndPoints[threadIndex].getOutputLine();
+        String output = pingEndPoints[threadIndex].readOutputLine();
 
         long delay = 0;
         if(! notConnected(output)){
@@ -424,7 +423,6 @@ public class Main {
         connect_ping_count = Integer.parseInt(config.getOrDefault("connect_ping_count", DEFAULT_CONNECT_PING_COUNT));
         master_gain = Float.parseFloat(config.getOrDefault("master_gain", DEFAULT_MASTER_GAIN));
         enable_debug_log = Boolean.parseBoolean(config.getOrDefault("enable_debug_log",DEFAULT_ENABLE_DEBUG_LOG));
-        test_interval = Integer.parseInt(config.getOrDefault("test_interval",DEFAULT_TEST_INTERVAL));
         long_response_threshold = Integer.parseInt(config.getOrDefault("long_response_threshold",DEFAULT_LONG_RESPONSE_THRESHOLD));
         firstConfigRead = false;
     }
