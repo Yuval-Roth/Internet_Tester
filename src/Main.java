@@ -78,6 +78,7 @@ public class Main {
 
     // < THREADS RELATED >
     private static Thread[] workerThreads;
+    private static PingEndPoint[] pingEndPoints;
     private static Exception[] workerThreadExceptions;
     private static boolean[] addressStatus;
     private volatile static boolean running;
@@ -101,6 +102,7 @@ public class Main {
     private static LocalDateTime timeOfDisconnection;
     private static LocalDateTime mainThreadTimeOfDisconnection;
     private static List<String> printQueue;
+    private static boolean firstConfigRead;
     // < GENERAL APPLICATION DATA />
 
     public static void main(String[] args)  {
@@ -121,6 +123,7 @@ public class Main {
                 addresses = args;
                 workerThreads = new Thread[addresses.length];
                 addressStatus = new boolean[addresses.length];
+                pingEndPoints = new PingEndPoint[addresses.length];
                 workerThreadExceptions = new Exception[addresses.length];
                 Arrays.fill(addressStatus,true);
                 clip = AudioSystem.getClip();
@@ -133,6 +136,7 @@ public class Main {
                 internetLogLock = new Object();
                 printQueue = new LinkedList<>();
                 printQueueLock = new Semaphore(1,true);
+                firstConfigRead = true;
                 // ==================================
 
                 readConfig();
@@ -201,11 +205,11 @@ public class Main {
         }
     }
 
-    private static void workerThreadMainLoop(int threadIndex, PingEndPoint endPoint) {
+    private static void workerThreadMainLoop(int threadIndex) {
         while(running){
             try{
                 LocalDateTime now = LocalDateTime.now();
-                if (!checkPing(endPoint, threadIndex)){
+                if (!checkPing(threadIndex)){
 
                     synchronized (timeOfDisconnectionLock){
                         if(timeOfDisconnection == null || timeOfDisconnection.isAfter(now)){
@@ -217,7 +221,7 @@ public class Main {
                     addToDisconnectedCounter(1);
 
                     // wait for connection to return
-                    while(running && !checkPing(endPoint, threadIndex)){
+                    while(running && !checkPing(threadIndex)){
                         try{
                             Thread.sleep(SLEEP_TIME_WAITING_FOR_CONNECTION_TO_RETURN);
                         } catch (InterruptedException ignored) {}
@@ -257,12 +261,12 @@ public class Main {
     //========================================================================== |
     //====================== PROGRAM FLOW FUNCTIONS ============================ |
     //========================================================================== |
-    private static boolean checkPing(PingEndPoint endPoint, int threadIndex) throws IOException {
+    private static boolean checkPing(int threadIndex) throws IOException {
 
         LocalDateTime now = LocalDateTime.now();
 
         // get output
-        String output = endPoint.getOutputLine();
+        String output = pingEndPoints[threadIndex].getOutputLine();
 
         long delay = 0;
         if(! notConnected(output)){
@@ -411,13 +415,24 @@ public class Main {
     }
 
     private static void initGlobalVariables() {
-        timeout = Integer.parseInt(config.getOrDefault("timeout", DEFAULT_TIMEOUT));
+        int newTimeout = Integer.parseInt(config.getOrDefault("timeout", DEFAULT_TIMEOUT));
+        if(!firstConfigRead && newTimeout != timeout){
+            updatePingEndPoints();
+        }
+        timeout = newTimeout;
         disconnect_ping_count = Integer.parseInt(config.getOrDefault("disconnect_ping_count", DEFAULT_DISCONNECT_PING_COUNT));
         connect_ping_count = Integer.parseInt(config.getOrDefault("connect_ping_count", DEFAULT_CONNECT_PING_COUNT));
         master_gain = Float.parseFloat(config.getOrDefault("master_gain", DEFAULT_MASTER_GAIN));
         enable_debug_log = Boolean.parseBoolean(config.getOrDefault("enable_debug_log",DEFAULT_ENABLE_DEBUG_LOG));
         test_interval = Integer.parseInt(config.getOrDefault("test_interval",DEFAULT_TEST_INTERVAL));
         long_response_threshold = Integer.parseInt(config.getOrDefault("long_response_threshold",DEFAULT_LONG_RESPONSE_THRESHOLD));
+        firstConfigRead = false;
+    }
+
+    private static void updatePingEndPoints() {
+        for(var endpoint : pingEndPoints){
+            endpoint.setParams(Pair.of("-t",null), Pair.of("-w",String.valueOf(timeout)));
+        }
     }
 
     private static void initWorkerThreads() {
@@ -426,7 +441,8 @@ public class Main {
                     Pair.of("-t",null),
                     Pair.of("-w",String.valueOf(timeout)));
             int threadIndex = i;
-            workerThreads[i] = new Thread(() -> workerThreadMainLoop(threadIndex, endPoint));
+            pingEndPoints[i] = endPoint;
+            workerThreads[i] = new Thread(() -> workerThreadMainLoop(threadIndex));
         }
     }
 
