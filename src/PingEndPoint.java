@@ -42,7 +42,10 @@ public class PingEndPoint {
     private String paramsToCommand(Pair<String,String> ... params) {
         StringBuilder command = new StringBuilder("ping "+ip);
         for(Pair<String,String> param : params) {
-            command.append(" ").append(param.first).append(" ").append(param.second);
+            command.append(" ").append(param.first);
+            if(param.second != null && !param.second.isEmpty()){
+                command.append(" ").append(param.second);
+            }
         }
         return command.toString();
     }

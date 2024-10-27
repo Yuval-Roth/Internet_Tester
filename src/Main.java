@@ -201,11 +201,11 @@ public class Main {
         }
     }
 
-    private static void workerThreadMainLoop(List<String> commands, int threadIndex) {
+    private static void workerThreadMainLoop(int threadIndex, PingEndPoint endPoint) {
         while(running){
             try{
                 LocalDateTime now = LocalDateTime.now();
-                if (!doPing(commands, threadIndex)){
+                if (!checkPing(endPoint, threadIndex)){
 
                     synchronized (timeOfDisconnectionLock){
                         if(timeOfDisconnection == null || timeOfDisconnection.isAfter(now)){
@@ -217,9 +217,7 @@ public class Main {
                     addToDisconnectedCounter(1);
 
                     // wait for connection to return
-                    List<String> waitingCommands = new ArrayList<>(commands);
-                    waitingCommands.set(3,"500"); // set the timeout to 500ms
-                    while(running && !doPing(waitingCommands, threadIndex)){
+                    while(running && !checkPing(endPoint, threadIndex)){
                         try{
                             Thread.sleep(SLEEP_TIME_WAITING_FOR_CONNECTION_TO_RETURN);
                         } catch (InterruptedException ignored) {}
@@ -259,32 +257,27 @@ public class Main {
     //========================================================================== |
     //====================== PROGRAM FLOW FUNCTIONS ============================ |
     //========================================================================== |
-    private static boolean doPing(List<String> command, int threadIndex) throws IOException {
-        ProcessBuilder pb = new ProcessBuilder(command);
+    private static boolean checkPing(PingEndPoint endPoint, int threadIndex) throws IOException {
+
         LocalDateTime now = LocalDateTime.now();
 
-        // run the process and count the time
-        long startMillis = System.currentTimeMillis();
-        Process process = pb.start();
-        long endMillis = System.currentTimeMillis();
-
         // get output
-        BufferedReader stdInput = new BufferedReader(new InputStreamReader(process.getInputStream()));
-        String s;
-        StringBuilder output = new StringBuilder();
-        while ((s = stdInput.readLine()) != null) {
-            output.append(s).append("\n");
-        }
-        output.deleteCharAt(output.length()-1); // remove the last '\n'
+        String output = endPoint.getOutputLine();
 
+        long delay = 0;
+        if(! notConnected(output)){
+            delay = extractDelay(output);
+        }
+        if(delay == -1) {
+            logError("Error: could not extract delay from output");
+        }
         // alert if response time passed the threshold
-        long diff = endMillis - startMillis;
         if(long_response_threshold > 0
                 && connected.get()
                 && ! notConnected(output.toString())
-                && diff >= long_response_threshold){
+                && delay >= long_response_threshold){
             String timeStamp = getTimestamp(now);
-            String message = "[%s] %s took %s ms to respond".formatted(timeStamp, addresses[threadIndex], diff);
+            String message = "[%s] %s took %s ms to respond".formatted(timeStamp, addresses[threadIndex], delay);
             logInternet(message);
         }
 
@@ -429,16 +422,11 @@ public class Main {
 
     private static void initWorkerThreads() {
         for(int i = 0; i < addresses.length; i++){
-            // create the ping command as a list of strings
-            List<String> commands = new ArrayList<String>();
-            commands.add("ping");
-            commands.add(addresses[i]);
-            commands.add("-w");
-            commands.add((timeout)+"");
-            commands.add("-n");
-            commands.add("1");
+            PingEndPoint endPoint = new PingEndPoint(addresses[i],
+                    Pair.of("-t",null),
+                    Pair.of("-w",String.valueOf(timeout)));
             int threadIndex = i;
-            workerThreads[i] = new Thread(() -> workerThreadMainLoop(commands, threadIndex));
+            workerThreads[i] = new Thread(() -> workerThreadMainLoop(threadIndex, endPoint));
         }
     }
 
@@ -626,5 +614,14 @@ public class Main {
         } catch (InterruptedException ignored) {}
         printQueue.add(message);
         printQueueLock.release();
+    }
+
+    private static int extractDelay(String output) {
+        for(String word : output.split(" ")){
+            if(word.contains("time=")){
+                return Integer.parseInt(word.substring(5,word.indexOf("ms")));
+            }
+        }
+        return -1;
     }
 }
