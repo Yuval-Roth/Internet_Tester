@@ -420,7 +420,8 @@ public class Main {
         int newTimeout = Integer.parseInt(config.getOrDefault("timeout", DEFAULT_TIMEOUT));
         if(!firstConfigRead && newTimeout != timeout){
             updatePingEndPoints();
-            logInternet("Timeout changed to "+newTimeout+" milliseconds");
+            String message = "Timeout changed to "+newTimeout+" milliseconds";
+            logInternet("[%s] %s".formatted(getTimestamp(LocalDateTime.now()),message));
         }
         timeout = newTimeout;
         disconnect_ping_count = Integer.parseInt(config.getOrDefault("disconnect_ping_count", DEFAULT_DISCONNECT_PING_COUNT));
