@@ -49,7 +49,7 @@ public class PingEndPoint {
             throw new RuntimeException(e);
         }
         stdInput = new BufferedReader(new InputStreamReader(proc.getInputStream()));
-        readOutputLine(); // skip first line
+        readOutputLine(); readOutputLine(); // skip the first 2 lines
     }
 
     @SafeVarargs

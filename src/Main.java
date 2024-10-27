@@ -268,14 +268,18 @@ public class Main {
         LocalDateTime now = LocalDateTime.now();
 
         // get output
-        String output = pingEndPoints[threadIndex].readOutputLine();
+        String output = "";
+        do{
+            output = pingEndPoints[threadIndex].readOutputLine();
+        } while(output.isEmpty());
 
         long delay = 0;
         if(! notConnected(output)){
             delay = extractDelay(output);
         }
         if(delay == -1) {
-            logError("Error: could not extract delay from output");
+            String message = "Error: could not extract delay from output";
+            logError("[%s] %s".formatted(getTimestamp(now),message));
         }
         // alert if response time passed the threshold
         if(long_response_threshold > 0
@@ -288,7 +292,7 @@ public class Main {
         }
 
         if (enable_debug_log){
-            String debugMsg = "[%s]%s\n".formatted(getTimestamp(now), output);
+            String debugMsg = "[%s]\n%s\n".formatted(getTimestamp(now), output);
             logDebug(debugMsg);
         }
 
