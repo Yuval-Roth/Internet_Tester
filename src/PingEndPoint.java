@@ -1,9 +1,7 @@
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
 import java.util.List;
 
 public class PingEndPoint {
@@ -26,15 +24,15 @@ public class PingEndPoint {
     public String readOutputLine() {
         try {
             String s = stdInput.readLine();
-            outputHistory.add(s);
-            if(outputHistory.size() > 2) outputHistory.removeFirst();
+            outputHistory.addFirst(s);
+            if(outputHistory.size() > 2) outputHistory.removeLast();
             return s == null ? "" : s;
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
     }
 
-    public String getPreviousOutputLine() {
+    public String getPreviousOutput() {
         if(outputHistory.size() < 2) return "";
         return outputHistory.getLast();
     }

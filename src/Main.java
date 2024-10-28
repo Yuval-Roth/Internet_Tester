@@ -229,7 +229,7 @@ public class Main {
                     } else {
                         logInternet("[%s] %s %s".formatted(getTimestamp(now),
                                 addresses[threadIndex],
-                                pingEndPoints[threadIndex].getPreviousOutputLine()));
+                                pingEndPoints[threadIndex].getPreviousOutput()));
                     }
 
                     // reset the time of disconnection if only this thread got disconnected
