@@ -265,6 +265,10 @@ public class Main {
     //========================================================================== |
     private static boolean checkPing(int threadIndex) throws IOException {
 
+        if(! pingEndPoints[threadIndex].isRunning()){
+            pingEndPoints[threadIndex].start();
+        }
+
         LocalDateTime now = LocalDateTime.now();
 
         // get output
@@ -440,17 +444,23 @@ public class Main {
         firstConfigRead = false;
     }
 
+    @SuppressWarnings("unchecked")
+    private static Pair<String,String>[] getPingParams(){
+        return (Pair<String,String>[]) new Pair[]{
+                Pair.of("-n","60"),
+                Pair.of("-w",String.valueOf(timeout))
+        };
+    }
+
     private static void updatePingEndPoints() {
         for(var endpoint : pingEndPoints){
-            endpoint.setParams(Pair.of("-t",null), Pair.of("-w",String.valueOf(timeout)));
+            endpoint.setParams(getPingParams());
         }
     }
 
     private static void initWorkerThreads() {
         for(int i = 0; i < addresses.length; i++){
-            PingEndPoint endPoint = new PingEndPoint(addresses[i],
-                    Pair.of("-t",null),
-                    Pair.of("-w",String.valueOf(timeout)));
+            PingEndPoint endPoint = new PingEndPoint(addresses[i], getPingParams());
             int threadIndex = i;
             pingEndPoints[i] = endPoint;
             workerThreads[i] = new Thread(() -> workerThreadMainLoop(threadIndex));
