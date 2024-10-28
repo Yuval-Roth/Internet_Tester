@@ -36,7 +36,7 @@ public class PingEndPoint {
 
     public String getPreviousOutputLine() {
         if(outputHistory.size() < 2) return "";
-        return outputHistory.getFirst();
+        return outputHistory.getLast();
     }
 
     @SafeVarargs

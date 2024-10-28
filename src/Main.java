@@ -354,18 +354,22 @@ public class Main {
         // this code fixes disconnection time skews from addresses that haven't responded in a while.
         // if an address doesn't respond, it will mark the time of disconnection as the time
         // that the address stopped responding, which could be a long time ago.
-        // if that time passes the timeout period plus one second but the other connections are fine
+        // if a long time passes but the other connections are fine
         // it's safe to assume that it is a problem with the address and not with the connection.
         // So we reset the time of disconnection.
-        synchronized (timeOfDisconnectionLock){
-            if(timeOfDisconnection != null){
-                if(connected.get()) {
-                    if(timeOfDisconnection.isBefore(LocalDateTime.now().minusSeconds((long)Math.ceil(timeout/1000.0) + 2))){
-                        timeOfDisconnection = null;
+        if(addresses.length > 1){
+            synchronized (timeOfDisconnectionLock){
+                if(timeOfDisconnection != null){
+                    if(connected.get()) {
+                        LocalDateTime threshold = LocalDateTime.now().minusSeconds((long) Math.ceil(timeout / 1000.0) * 4 + 2);
+                        if(timeOfDisconnection.isBefore(threshold)){
+                            timeOfDisconnection = null;
+                        }
                     }
                 }
             }
         }
+
 
         return stateChanged;
     }
