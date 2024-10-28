@@ -68,6 +68,7 @@ public class PingEndPoint {
 
     @SafeVarargs
     public final void setParams(Pair<String, String>... params) {
+        this.params.clear();
         Arrays.stream(params).forEach(p -> this.params.put(p.first, p.second));
     }
 
